@@ -26,11 +26,23 @@ A collection of demo applications for DEEPX NPU inference.
 
 ## Prerequisites
 
-All demos require **DX-RT** (DeepX Runtime) to be built and installed before use.
+All demos require **DX-RT** (DeepX Runtime) to be installed before use.
+Refer to the [dx-all-suite installation guide](https://github.com/DEEPX-AI/dx-all-suite/blob/main/docs/source/installation.md) for full details.
 
-```python
-# Verify DX-RT is available
-import dx_engine
+### Installing DX-RT via dx-all-suite
+
+```bash
+mkdir -p /project/workspace/pathname
+cd /project/workspace/pathname
+git clone --recurse-submodules https://github.com/DEEPX-AI/dx-all-suite.git
+cd ./dx-all-suite
+./dx-runtime/install.sh --all
+```
+
+### Activating the virtual environment
+
+```bash
+source ./dx-runtime/venv-dx-runtime/bin/activate
 ```
 
 ## Demo Details
