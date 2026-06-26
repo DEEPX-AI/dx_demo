@@ -1,17 +1,16 @@
 > English documentation: [README.md](README.md)
 
-# YOLO26 멀티채널 데모
+# YOLO26 세그멘테이션 멀티채널 데모
 
-YOLO26 검출 모델을 사용하는 멀티채널 Qt 데모 애플리케이션으로, 전적으로
-**dx_stream**(네이티브 GStreamer) 기반으로 동작합니다. **OpenCV 의존성이
-없습니다.**
-
-- Qt GUI 오른쪽에는 **클래스 목록 패널**이 있으며, 각 클래스마다 체크박스가 있어
-  해당 클래스의 BBOX 표시 여부를 개별적으로 제어할 수 있습니다.
+YOLO26 인스턴스 **세그멘테이션** 모델을 사용하는 멀티채널 Qt 데모
+애플리케이션으로, 전적으로 **dx_stream**(네이티브 GStreamer) 기반으로
+동작합니다. **OpenCV 의존성이 없습니다.** dx_stream의 `run_yolo26n-seg.sh`
+레퍼런스 파이프라인을 그대로 따르며, 세그멘테이션 마스크는 `dxosd` 엘리먼트가
+하드웨어로 렌더링하고 Qt가 4개 스트림을 2x2 그리드로 합성합니다.
 
 ## 스크린샷
 
-![YOLO26 Demo Screenshot](img/yolo26_4ch_demo_screenshot.png)
+![YOLO26 Segmentation Demo Screenshot](img/yolo26_4ch_demo_screenshot.png)
 
 ## 아키텍처
 
@@ -20,17 +19,19 @@ YOLO26 검출 모델을 사용하는 멀티채널 Qt 데모 애플리케이션�
 ```
 decodebin (HW mppvideodec)         # 하드웨어 비디오 디코딩 (VPU)
   -> dxpreprocess                  # 모델 입력용 RGA 레터박스/리사이즈
-  -> dxinfer                       # NPU에서 YOLO26 추론
-  -> dxpostprocess                 # 검출 결과 디코딩 (원본 프레임 좌표)
+  -> dxinfer                       # NPU에서 YOLO26-seg 추론
+  -> dxpostprocess                 # 세그멘테이션 디코딩 (libpostprocess_yolo26seg)
   -> [dxscale]                     # RGA 디스플레이 다운스케일 (예: 960x540)
+  -> dxosd                         # 마스크/박스를 (다운스케일된) 프레임에 HW 렌더링
   -> dxconvert | videoconvert      # NV12 -> RGB (가능 시 RGA 하드웨어)
-  -> appsink                       # 프레임 + 검출 결과를 Qt로 전달
+  -> appsink                       # 오버레이된 프레임을 Qt로 전달
 ```
 
-추론은 GStreamer 내부에서 전적으로 NPU에서 실행됩니다. Python 측은 작은 RGB
-타일과 검출 메타데이터(`pydxs`로 읽어옴)만 받아 오버레이를 그립니다. 색상 변환과
-디스플레이 다운스케일은 **RGA** 하드웨어로 오프로드되고, 2x2 타일은 **Mali GPU**로
-합성할 수 있으며, 각 채널은 부드러운 재생을 위해 원본 영상의 **네이티브 FPS**에
+추론과 세그멘테이션 오버레이는 모두 GStreamer 내부(NPU + RGA)에서 실행됩니다.
+Python 측은 이미 오버레이된 작은 RGB 타일만 받아 2x2 그리드로 합성합니다. 색상
+변환과 디스플레이 다운스케일은 **RGA** 하드웨어로 오프로드되고, 2x2 타일은
+**Mali GPU**로 합성할 수 있으며, 각 채널은 부드러운 재생을 위해 원본 영상의
+**네이티브 FPS**에
 맞춰집니다.
 
 ## 사전 요구사항
@@ -104,18 +105,18 @@ python -c "import pydxs"        # pydxs 바인딩 임포트 확인
 ## 설정
 
 환경에 맞게
-[`demo/config/yolo26_multich.yaml`](demo/config/yolo26_multich.yaml)을
+[`demo/config/yolo26seg_multich.yaml`](demo/config/yolo26seg_multich.yaml)을
 수정하세요.
 
 ```yaml
 # 모델 파일 경로 (DXNN 포맷)
-model: "assets/models/yolo26n-1.dxnn"
+model: "assets/models/yolo26n-seg.dxnn"
 
 # 추론 백엔드. "dxstream"만 지원됩니다(레거시 OpenCV 백엔드는 제거됨).
 engine_backend: "dxstream"
 
 dxstream:
-  postprocess_library: "/usr/local/share/gstdxstream/lib/libpostprocess_yolo26od.so"
+  postprocess_library: "/usr/local/share/gstdxstream/lib/libpostprocess_yolo26seg.so"
   postprocess_function: "PostProcess"
   keep_ratio: true
   pad_value: 114
@@ -222,6 +223,6 @@ performance 클러스터이며, `performance`(기본)는 A76에 고정합니다.
 - `demo/cpu_affinity.py` - CPU 클러스터 자동 감지 및 고정
 - `demo/gst_utils.py` - GStreamer 엘리먼트 가용성 확인 (OpenCV 없음)
 - `demo/meta_adapter.py` / `demo/pydxs_bridge.py` - pydxs 검출 결과 읽기
-- `demo/config/yolo26_multich.yaml` - 설정 파일
+- `demo/config/yolo26seg_multich.yaml` - 설정 파일
 - `assets/models/` - DXNN 모델 파일
 - `assets/videos/` - 테스트 영상 파일

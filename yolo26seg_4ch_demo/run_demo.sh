@@ -31,7 +31,7 @@ if pip install --dry-run -r requirements.txt 2>/dev/null | grep -q "Would instal
 fi
 
 # Download model and sample videos if not present
-if [ ! -f "assets/models/yolo26n-1.dxnn" ] || [ ! "$(ls -A assets/videos/ 2>/dev/null)" ]; then
+if [ ! -f "assets/models/yolo26n-seg.dxnn" ] || [ ! "$(ls -A assets/videos/ 2>/dev/null)" ]; then
     echo "[INFO] Model or sample videos not found. Running setup.sh..."
     ./setup.sh
 fi

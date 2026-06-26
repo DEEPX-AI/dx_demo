@@ -1,16 +1,16 @@
 > Korean documentation: [README-ko.md](README-ko.md)
 
-# YOLO26 Multi-Channel Demo
+# YOLO26 Segmentation Multi-Channel Demo
 
-A multi-channel Qt demo application using the YOLO26 detection model, built
-entirely on **dx_stream** (native GStreamer). There is **no OpenCV dependency**.
-
-- The Qt GUI has a **class list panel** on the right side, where each class has a
-  checkbox to individually control whether the BBOX for that class is displayed.
+A multi-channel Qt demo application using the YOLO26 instance **segmentation**
+model, built entirely on **dx_stream** (native GStreamer). There is **no OpenCV
+dependency**. It mirrors the dx_stream `run_yolo26n-seg.sh` reference pipeline:
+the segmentation masks are rendered in hardware by the `dxosd` element and the Qt
+front end composites the four overlaid streams into a 2x2 grid.
 
 ## Screenshot
 
-![YOLO26 Demo Screenshot](img/yolo26_demoplay.gif)
+![YOLO26 Segmentation Demo Screenshot](img/yolo26seg_demoplay.gif)
 
 ## Architecture
 
@@ -19,16 +19,17 @@ Each channel runs **one native dx_stream GStreamer pipeline**:
 ```
 decodebin (HW mppvideodec)         # hardware video decode (VPU)
   -> dxpreprocess                  # RGA letterbox / resize for the model
-  -> dxinfer                       # YOLO26 inference on the NPU
-  -> dxpostprocess                 # decode detections (original-frame coords)
+  -> dxinfer                       # YOLO26-seg inference on the NPU
+  -> dxpostprocess                 # decode segmentation (libpostprocess_yolo26seg)
   -> [dxscale]                     # RGA display downscale (e.g. 960x540)
+  -> dxosd                         # HW render of masks/boxes onto the (downscaled) frame
   -> dxconvert | videoconvert      # NV12 -> RGB (RGA hardware when available)
-  -> appsink                       # frames + detections handed to Qt
+  -> appsink                       # overlaid frames handed to Qt
 ```
 
-Inference runs entirely on the NPU inside GStreamer. The Python side only
-receives small RGB tiles and detection metadata (read back via `pydxs`) and
-draws overlays. Colour conversion and display downscale are offloaded to the
+Inference and the segmentation overlay run entirely inside GStreamer (NPU + RGA).
+The Python side only receives small, already-overlaid RGB tiles and composites
+the 2x2 grid. Colour conversion and display downscale are offloaded to the
 **RGA** hardware, the 2x2 tiles can be composited on the **Mali GPU**, and each
 channel is paced to its source video's **native FPS** for smooth playback.
 
@@ -102,22 +103,27 @@ To install manually without running the demo:
 
 ## Configuration
 
-Edit [`demo/config/yolo26_multich.yaml`](demo/config/yolo26_multich.yaml) to
-match your environment.
+Edit [`demo/config/yolo26seg_multich.yaml`](demo/config/yolo26seg_multich.yaml)
+to match your environment.
 
 ```yaml
 # Model file path (DXNN format)
-model: "assets/models/yolo26n-1.dxnn"
+model: "assets/models/yolo26n-seg.dxnn"
 
 # Inference backend. Only "dxstream" is supported (the legacy OpenCV backend
 # has been removed).
 engine_backend: "dxstream"
 
 dxstream:
-  postprocess_library: "/usr/local/share/gstdxstream/lib/libpostprocess_yolo26od.so"
+  postprocess_library: "/usr/local/share/gstdxstream/lib/libpostprocess_yolo26seg.so"
   postprocess_function: "PostProcess"
   keep_ratio: true
   pad_value: 114
+
+  # Render the segmentation overlay (masks + boxes) in the pipeline with the HW
+  # `dxosd` element (default true). Set false to deliver clean, un-overlaid
+  # frames.
+  osd: true
 
   # NV12 -> RGB colour conversion for the display branch:
   #   auto : RGA `dxconvert` when available, else CPU `videoconvert` (default)
@@ -223,6 +229,6 @@ A76 cores (cpu4-7, ~2.25-2.3 GHz) are the performance cluster — `performance`
 - `demo/cpu_affinity.py` - CPU cluster auto-detection and pinning
 - `demo/gst_utils.py` - GStreamer element availability check (no OpenCV)
 - `demo/meta_adapter.py` / `demo/pydxs_bridge.py` - pydxs detection read-back
-- `demo/config/yolo26_multich.yaml` - Configuration file
+- `demo/config/yolo26seg_multich.yaml` - Configuration file
 - `assets/models/` - DXNN model files
 - `assets/videos/` - Test video files

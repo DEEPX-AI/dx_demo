@@ -83,6 +83,14 @@ class _VideoRenderMixin:
         # Text overlay for per-channel statistics
         # (FPS, processed frame count, dropped frame count)
         self._stats_text: str = ""
+        # When False, the Python box overlay is not drawn (e.g. the segmentation
+        # overlay is already rendered in the GStreamer pipeline by dxosd).
+        self._overlay_enabled: bool = True
+
+    def set_overlay_enabled(self, enabled: bool) -> None:
+        """Enable/disable the Python detection box overlay drawn in paintEvent."""
+
+        self._overlay_enabled = bool(enabled)
 
     def set_overlay_style(self, class_names: List[str], palette: np.ndarray) -> None:
         """Inject class names and the colour palette used to draw boxes/labels."""
@@ -137,6 +145,9 @@ class _VideoRenderMixin:
         off_y: int,
     ) -> None:  # pragma: no cover - GUI only
         """Draw detection boxes + labels mapped onto the scaled pixmap."""
+
+        if not self._overlay_enabled:
+            return
 
         detections = self._detections
         if detections is None or len(detections) == 0:
@@ -756,6 +767,15 @@ class MainWindow(QtWidgets.QMainWindow):
         # still throttles the pipeline to the native fps.
         sync_to_fps = bool(dxs.get("sync_to_fps", True))
 
+        # Render the segmentation overlay in the GStreamer pipeline with dxosd
+        # (HW), exactly like the dx_stream run_yolo26n-seg.sh reference. When
+        # enabled the masks are already baked into the frames delivered to Qt, so
+        # the Python box overlay is suppressed to avoid double-drawing.
+        osd = bool(dxs.get("osd", True))
+        if osd:
+            for w in self.video_widgets:
+                w.set_overlay_enabled(False)
+
         print(
             "[INFO] dxstream backend: color_convert={} display_size={} "
             "sync_to_fps={}".format(
@@ -780,6 +800,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 display_size=display_size,
                 color_convert=color_convert,
                 sync=False,
+                osd=osd,
             )
             pipe = StreamPipeline(
                 channel_id=idx,
@@ -1042,7 +1063,7 @@ def load_config(path: str) -> Dict[str, Any]:
 
 def main() -> None:  # pragma: no cover - entry point
     base_dir = Path(__file__).resolve().parent
-    default_cfg = base_dir / "config" / "yolo26_multich.yaml"
+    default_cfg = base_dir / "config" / "yolo26seg_multich.yaml"
 
     if not default_cfg.exists():
         print(f"[ERROR] Config file not found: {default_cfg}")
