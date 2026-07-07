@@ -6,21 +6,7 @@ add_compile_definitions(PROJECT_ROOT_DIR="${CMAKE_SOURCE_DIR}")
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
-
-if(NOT "${CMAKE_HOST_SYSTEM_PROCESSOR}" STREQUAL "${CMAKE_SYSTEM_PROCESSOR}")
-    set(CROSS_COMPILE TRUE)
-else()
-    set(CROSS_COMPILE FALSE)
-endif()
-
-set(STD_FS_NO_LIB_NEEDED FALSE)
-if(CMAKE_CXX_STANDARD GREATER_EQUAL 17)
-    set(STD_FS_NO_LIB_NEEDED TRUE)
-endif()
-
-include(dxdemo.cfg)
-include(dxdemo.function)
+option(ENABLE_DEBUG_INFO "Include debugging informations in build output" ON)
 
 execute_process(
     COMMAND gst-inspect-1.0 vaapidecodebin
@@ -38,8 +24,14 @@ if(ENABLE_DEBUG_INFO)
     set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 endif()
 
-add_dxrt_lib()
-add_opencv()
+# dxrt: located directly since the debian package ships no cmake package config
+find_library(DXRT_LIBRARY dxrt HINTS ${DXRT_INSTALLED_DIR}/lib)
+find_path(DXRT_INCLUDE_DIR dxrt/dxrt_api.h HINTS ${DXRT_INSTALLED_DIR}/include)
+if(NOT DXRT_LIBRARY OR NOT DXRT_INCLUDE_DIR)
+    message(FATAL_ERROR "dxrt not found. Install dx_rt or set -DDXRT_INSTALLED_DIR=<install prefix>")
+endif()
+
+find_package(OpenCV REQUIRED)
 
 # Check for OpenCV freetype contrib module
 if(TARGET opencv_freetype OR OpenCV_freetype_FOUND OR "opencv_freetype" IN_LIST OpenCV_LIBS)
@@ -73,19 +65,14 @@ add_executable(yolo_multi_demo
     ${CMAKE_SOURCE_DIR}/src/yolo_multi_channels.cpp
 )
 
-if(STD_FS_NO_LIB_NEEDED)
-    set(STD_FS_LIB "")
-else()
-    set(STD_FS_LIB stdc++fs)
-endif()
-
 target_include_directories(yolo_multi_demo PRIVATE
     ${DEMO_UTILS_DIR}/include
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/extern/
     ${CMAKE_SOURCE_DIR}/lib/
+    ${DXRT_INCLUDE_DIR}
 )
-target_link_libraries(yolo_multi_demo ${link_libs} ${STD_FS_LIB})
+target_link_libraries(yolo_multi_demo ${DXRT_LIBRARY} ${OpenCV_LIBS} pthread stdc++fs)
 
 if(HAVE_OPENCV_FREETYPE)
   target_compile_definitions(yolo_multi_demo PRIVATE HAVE_OPENCV_FREETYPE)
