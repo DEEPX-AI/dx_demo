@@ -77,12 +77,13 @@ struct AppConfig
     int num_devices; // for sidebar display
     float sidebar_font_scale; // 1.0 = default, <1.0 smaller, >1.0 larger
     float fps_value_font_scale; // 0.5 = default
+    int display_fps; // max FPS for imshow rendering (0 = unlimited)
 };
 
 // pre/post parameter table
 extern YoloParam yolov5s_320, yolov5s_512, yolov5s_640,
 yolov7_512, yolov7_640, yolov8_640, yolox_s_512, yolov5s_face_640, yolov3_512, yolov4_416,
-yolov9_640, yolov5s_512_ppu, scrfd_face_640_ppu;
+yolov9_640, yolov5s_512_ppu, yolov5s_640_ppu, scrfd_face_640_ppu;
 std::vector<YoloParam> yoloParams = {
     yolov5s_320,
     yolov5s_512,
@@ -96,6 +97,7 @@ std::vector<YoloParam> yoloParams = {
     yolov4_416,
     yolov9_640,
     yolov5s_512_ppu,
+    yolov5s_640_ppu,
     scrfd_face_640_ppu
 };
 
@@ -257,6 +259,13 @@ int ApplicationJsonParser(std::string configPath, AppConfig* dst)
         }
 
         dst->fps_value_font_scale = 0.5f;
+
+        dst->display_fps = 30;
+        if(displayConfig.HasMember("display_fps"))
+        {
+            DXRT_ASSERT(displayConfig["display_fps"].IsInt(), "ERR. display_fps must be integer");
+            dst->display_fps = displayConfig["display_fps"].GetInt();
+        }
         if(displayConfig.HasMember("fps_value_font_scale"))
         {
             DXRT_ASSERT(displayConfig["fps_value_font_scale"].IsNumber(), "ERR. fps_value_font_scale must be number");
@@ -324,6 +333,8 @@ YoloParam getYoloParameter(std::string model_name){
         return yolov9_640;
     else if(model_name == "yolov5s_512_ppu")
         return yolov5s_512_ppu;
+    else if(model_name == "yolov5s_640_ppu")
+        return yolov5s_640_ppu;
     else if(model_name == "scrfd_face_640_ppu")
         return scrfd_face_640_ppu;
     return yolov5s_512;
@@ -1543,15 +1554,30 @@ DXRT_TRY_CATCH_BEGIN
     // CPU/NPU 시스템 모니터 표시 토글 ('m' 키). 기본 off.
     bool showSysStats = false;
 
+    // --- Display FPS throttle ---
+    // display_fps=0 means unlimited; otherwise cap imshow to N fps.
+    const int display_period_ms = (appConfig.display_fps > 0)
+        ? std::max(1, 1000 / appConfig.display_fps)
+        : 1;
+
+    // Per-app dirty tracking: only copyTo when the app produced a new frame.
+    std::vector<uint64_t> lastRenderCounts(apps.size(), UINT64_MAX);
+
     while(true)
     {
+        auto renderStart = std::chrono::steady_clock::now();
         frameCount = 0.1;
         float resultFps = 0.f;
 
         for(int i = 0; i < (int)apps.size(); i++)
         {
-            cv::Mat roi = outFrame(dstPoint[i]);
-            apps[i]->ResultFrame().copyTo(roi);
+            uint64_t cnt = apps[i]->GetPostProcessCount();
+            if(cnt != lastRenderCounts[i])
+            {
+                cv::Mat roi = outFrame(dstPoint[i]);
+                apps[i]->ResultFrame().copyTo(roi);
+                lastRenderCounts[i] = cnt;
+            }
         }
 
         allFrameCount++;
@@ -1677,7 +1703,12 @@ DXRT_TRY_CATCH_BEGIN
 #else
         cv::imshow(DISPLAY_WINDOW_NAME, outFrame);
 
-        int key = cv::waitKey(1);
+        // Throttle: sleep for the remaining frame budget so the render loop
+        // does not spin at full CPU speed when imshow is faster than display_fps.
+        auto renderElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - renderStart).count();
+        int waitMs = std::max(1, display_period_ms - (int)renderElapsed);
+        int key = cv::waitKey(waitMs);
 #endif
         if(key == 0x1B || key == 0x71 || g_exitRequested) //'ESC' or 'q' or EXIT button
         {

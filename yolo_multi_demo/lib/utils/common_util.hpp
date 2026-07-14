@@ -28,6 +28,9 @@
 #elif _WIN32
 #include <Windows.h>
 #include <io.h>
+// <wingdi.h> (via <Windows.h>) defines `ERROR` as a macro, which collides with
+// dxrt's `enum class LEVEL { ... ERROR, ... }`. Drop it before the dxrt headers.
+#undef ERROR
 #define fsync _commit
 #define popen _popen
 #define pclose _pclose
