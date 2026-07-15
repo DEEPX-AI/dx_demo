@@ -34,6 +34,14 @@ If no input is given, the default value `0` is selected.
 ## How to Exit
 
 - Press `ESC` or `Q` while running to exit.
+- Click the window's **`X`** (close) button to exit.
+- Or press **`Ctrl+C`** in the console for a clean shutdown.
+
+> **Windows note:** the display window is created **non-activating** by default
+> (`display_config.no_activate`, see below). A focused/active OpenCV HighGUI
+> window drastically slows the whole process on Windows, so the window never
+> takes focus — meaning `ESC`/`Q` (which need keyboard focus) won't work there.
+> Use the window **`X`** button (windowed mode) or **`Ctrl+C`** in the console.
 
 ## Camera Expand Layout
 
@@ -49,6 +57,7 @@ When `video_sources` includes a camera input (one of `"camera"`, `"camera_image"
 |-----|------|---------|-------------|
 | `sidebar_font_scale` | float | 1.0 | Sidebar font scale |
 | `fps_value_font_scale` | float | 0.5 | Top HUD FPS value font scale |
+| `no_activate` | bool | true | **Windows only.** Create a non-activating display window. Keep `true` — an active OpenCV window collapses inference throughput (~6×) on Windows. Set `false` only if you need a normally focusable window and accept the slowdown. |
 
 Example (part of `video_sources`):
 

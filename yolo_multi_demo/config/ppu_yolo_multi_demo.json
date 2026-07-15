@@ -15,6 +15,8 @@
     ],
 
     "display_config": {
+        "dynamic_window_mode": true,
+        "no_activate": false,
         "display_label": "output",
         "capture_period": 30,
         "display_fps": 30,

@@ -398,21 +398,22 @@ void ObjectDetection::Toggle()
 }
 void ObjectDetection::PostProc(std::vector<std::shared_ptr<dxrt::Tensor>> &outputs)
 {
-    std::unique_lock<std::mutex> lk(_lock);
-    _bboxes = yolo.PostProc(outputs);
-
+    {
+        std::unique_lock<std::mutex> lk(_lock);
+        _bboxes = yolo.PostProc(outputs);
+    }
+    // Atomic increments — no lock needed, so readers below never block NMS.
     _processed_count++;
     _ret_processed_count++;
 }
 uint64_t ObjectDetection::GetPostProcessCount()
 {
-    std::unique_lock<std::mutex> lk(_lock);
-    return _ret_processed_count;
+    // Lock-free read: must not contend with PostProc()'s _lock (see od.h).
+    return _ret_processed_count.load();
 }
 void ObjectDetection::SetZeroPostProcessCount()
 {
-    std::unique_lock<std::mutex> lk(_lock);
-    _ret_processed_count = 0;
+    _ret_processed_count.store(0);
 }
 std::ostream& operator<<(std::ostream& os, const ObjectDetection& od)
 {

@@ -13,6 +13,8 @@
 
 #include <string.h>
 #include <errno.h>
+#include <csignal>
+#include <atomic>
 #include <cctype>
 #include <iomanip>
 #include <sstream>
@@ -78,6 +80,7 @@ struct AppConfig
     float sidebar_font_scale; // 1.0 = default, <1.0 smaller, >1.0 larger
     float fps_value_font_scale; // 0.5 = default
     int display_fps; // max FPS for imshow rendering (0 = unlimited)
+    int no_activate; // Windows: non-activating window (avoids focus-slowdown). default on
 };
 
 // pre/post parameter table
@@ -272,6 +275,16 @@ int ApplicationJsonParser(std::string configPath, AppConfig* dst)
             dst->fps_value_font_scale = (float)displayConfig["fps_value_font_scale"].GetDouble();
         }
 
+        // Windows-only: keep the display window non-activating so it never
+        // becomes the foreground/active window (that state collapses this
+        // process's throughput). Default on; set false to allow a normal window.
+        dst->no_activate = 1;
+        if(displayConfig.HasMember("no_activate"))
+        {
+            DXRT_ASSERT(displayConfig["no_activate"].IsBool(), "ERR. no_activate must be boolean");
+            dst->no_activate = displayConfig["no_activate"].GetBool();
+        }
+
         DXRT_ASSERT(doc.HasMember("video_sources"), "ERR. video_sources argument not placed");
         DXRT_ASSERT(doc["video_sources"].IsArray(), "ERR. video_sources must be array");
         const rapidjson::Value& videoSources = doc["video_sources"];
@@ -398,8 +411,12 @@ static void suppressUnusedTaskThreeHelpers() {
 #pragma GCC diagnostic pop
 #endif
 
-// --- EXIT 버튼 마우스 콜백 ---
-static bool g_exitRequested = false;
+// --- EXIT 요청 플래그 (마우스/시그널 공용) ---
+static std::atomic<bool> g_exitRequested{false};
+
+// Ctrl+C (SIGINT) / SIGTERM: request a clean shutdown. The render loop polls
+// g_exitRequested and then stops apps + joins threads before exiting.
+static void onExitSignal(int) { g_exitRequested = true; }
 
 // --- DEEPX 디바이스 표시명 목록 ---
 // dxrt-cli -s 의 "Device N: <variant>" 정보를 기반으로 사용자 친화적인 이름을 만든다.
@@ -1200,6 +1217,11 @@ static void renderHeaderHud(cv::Mat& frame,
 int main(int argc, char *argv[])
 {
 DXRT_TRY_CATCH_BEGIN
+    // Ctrl+C / kill -> clean shutdown (needed since a non-activating fullscreen
+    // window has no 'X' button and can't receive ESC/'q' key events).
+    std::signal(SIGINT, onExitSignal);
+    std::signal(SIGTERM, onExitSignal);
+
     std::string configPath = "";
     double frameCount = 0.0, window_size = 60.0;
     bool loggingVersion = false;
@@ -1525,6 +1547,29 @@ DXRT_TRY_CATCH_BEGIN
     }
     cv::moveWindow(DISPLAY_WINDOW_NAME, 0, 0);
     cv::setMouseCallback(DISPLAY_WINDOW_NAME, onMouseCallback, nullptr);
+
+#ifdef _WIN32
+    // A focused (active) OpenCV HighGUI window collapses this process's
+    // throughput on Windows (inference ~6x slower). Making the window
+    // non-activating avoids that: it displays (even fullscreen/topmost) but
+    // never becomes the active window. Hand the foreground back to the console
+    // so the app runs at full speed from the first frame. Disable with
+    // display_config "no_activate": false. Exit via the console (Ctrl+C) or,
+    // in windowed mode, the window 'X' button.
+    if(appConfig.no_activate)
+    {
+        HWND hwnd = FindWindowA(NULL, DISPLAY_WINDOW_NAME);
+        if(hwnd)
+        {
+            SetWindowLongPtr(hwnd, GWL_EXSTYLE,
+                             GetWindowLongPtr(hwnd, GWL_EXSTYLE) | WS_EX_NOACTIVATE);
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            HWND console = GetConsoleWindow();
+            if(console) SetForegroundWindow(console);
+        }
+    }
+#endif
 #endif
 
     for(auto &app:apps)
@@ -1703,14 +1748,25 @@ DXRT_TRY_CATCH_BEGIN
 #else
         cv::imshow(DISPLAY_WINDOW_NAME, outFrame);
 
-        // Throttle: sleep for the remaining frame budget so the render loop
-        // does not spin at full CPU speed when imshow is faster than display_fps.
+        // Throttle to display_fps: sleep the remaining frame budget so the
+        // render loop doesn't spin faster than needed.
         auto renderElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - renderStart).count();
         int waitMs = std::max(1, display_period_ms - (int)renderElapsed);
         int key = cv::waitKey(waitMs);
 #endif
-        if(key == 0x1B || key == 0x71 || g_exitRequested) //'ESC' or 'q' or EXIT button
+        // Window 'X' (close) button: getWindowProperty returns < 1 once the
+        // window is closed. Needed because a non-activating window can't receive
+        // ESC/'q' key events via waitKey (use console Ctrl+C or the 'X' button).
+        bool windowClosed = false;
+#if !__riscv
+        try {
+            windowClosed = (cv::getWindowProperty(DISPLAY_WINDOW_NAME, cv::WND_PROP_VISIBLE) < 1);
+        } catch(const cv::Exception&) {
+            windowClosed = true;
+        }
+#endif
+        if(key == 0x1B || key == 0x71 || g_exitRequested || windowClosed) //'ESC' or 'q' or window 'X'
         {
             sl.threadStatus.store(-1);
             for(auto &app:apps)

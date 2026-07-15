@@ -58,8 +58,12 @@ private:
     uint64_t _processTime = 0;
     uint64_t _duration_time = 0;
     uint64_t _processAverageTime = 0;
-    uint64_t _processed_count = 0;
-    uint64_t _ret_processed_count = 0;
+    // Atomic so the display loop can poll GetPostProcessCount() without taking
+    // _lock — otherwise fast polling contends with PostProc()'s NMS (which holds
+    // _lock), serializing inference (worst when the window is foreground and
+    // Windows grants a high-resolution timer that speeds up the poll loop).
+    std::atomic<uint64_t> _processed_count{0};
+    std::atomic<uint64_t> _ret_processed_count{0};
     std::chrono::high_resolution_clock::time_point _fps_time_s;
     std::chrono::high_resolution_clock::time_point _fps_time_e;
     int _srcWidth;
