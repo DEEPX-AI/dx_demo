@@ -269,10 +269,7 @@ void ObjectDetection::threadFunc(int period)
             {
                 cv::Rect badgeRect(margin, margin, badgeW, badgeH);
 
-                // 반투명 어두운 배경 (가독성)
-                cv::Mat badgeRoi = member_temp(badgeRect);
-                cv::Mat overlay(badgeRoi.size(), badgeRoi.type(), cv::Scalar(0, 0, 0));
-                cv::addWeighted(overlay, 0.55, badgeRoi, 0.45, 0.0, badgeRoi);
+                cv::rectangle(member_temp, badgeRect, cv::Scalar(0, 0, 0), cv::FILLED);
 
                 // 좌측 액센트 바 (빨강)
                 cv::rectangle(member_temp,
@@ -402,13 +399,11 @@ void ObjectDetection::PostProc(std::vector<std::shared_ptr<dxrt::Tensor>> &outpu
         std::unique_lock<std::mutex> lk(_lock);
         _bboxes = yolo.PostProc(outputs);
     }
-    // Atomic increments — no lock needed, so readers below never block NMS.
     _processed_count++;
     _ret_processed_count++;
 }
 uint64_t ObjectDetection::GetPostProcessCount()
 {
-    // Lock-free read: must not contend with PostProc()'s _lock (see od.h).
     return _ret_processed_count.load();
 }
 void ObjectDetection::SetZeroPostProcessCount()

@@ -28,12 +28,24 @@ echo Unknown argument: %~1
 exit /b 1
 :args_done
 
-if not defined DEEPX_SDK_DIR (
-    echo [ERROR] DEEPX_SDK_DIR is not set. Point it at the DEEPX SDK install directory.
+rem Defaults so you don't have to set the environment manually.
+rem Override by exporting DEEPX_SDK_DIR / OpenCV_DIR before running this script.
+if not defined DEEPX_SDK_DIR set "DEEPX_SDK_DIR=C:\Program Files\DEEPX\DX_SDK_20260630"
+if not defined OpenCV_DIR   set "OpenCV_DIR=%SCRIPT_DIR%\vcpkg_installed\x64-windows\share\opencv4"
+
+echo [INFO] DEEPX_SDK_DIR = %DEEPX_SDK_DIR%
+echo [INFO] OpenCV_DIR    = %OpenCV_DIR%
+
+if not exist "%DEEPX_SDK_DIR%" (
+    echo [ERROR] DEEPX_SDK_DIR not found: %DEEPX_SDK_DIR%
+    echo         Set it to your DEEPX SDK install dir, e.g. set "DEEPX_SDK_DIR=C:\Program Files\DEEPX\DX_SDK_XXXXXXXX"
     exit /b 1
 )
-if not defined OpenCV_DIR (
-    echo [ERROR] OpenCV_DIR is not set. Point it at the OpenCV CMake config directory.
+rem If OpenCV isn't present yet, install project deps via vcpkg (manifest mode).
+if not exist "%OpenCV_DIR%" call :install_opencv
+if not exist "%OpenCV_DIR%" (
+    echo [ERROR] OpenCV_DIR still not found: %OpenCV_DIR%
+    echo         vcpkg install may have failed, or OpenCV_DIR points to the wrong place.
     exit /b 1
 )
 
@@ -66,11 +78,51 @@ if errorlevel 1 (
 )
 
 if exist "%BIN_DIR%" (
-    echo [INFO] Build done (%BUILD_TYPE%). Binary in: %BIN_DIR%\
+    echo [INFO] Build done - %BUILD_TYPE%. Binary in: %BIN_DIR%
     dir /b "%BIN_DIR%"
 ) else (
-    echo [ERROR] Build failed - bin\ not created.
+    echo [ERROR] Build failed - bin not created.
     exit /b 1
 )
 
 endlocal
+exit /b 0
+
+rem ---------------------------------------------------------------------------
+rem Install project dependencies (OpenCV, etc.) via vcpkg in manifest mode.
+rem Reads vcpkg.json in this directory and populates vcpkg_installed\.
+rem ---------------------------------------------------------------------------
+:install_opencv
+echo [INFO] OpenCV not found. Installing dependencies via vcpkg ^(manifest mode^)...
+echo        This can take a while the first time ^(OpenCV may build from source^).
+
+set "VCPKG_EXE="
+if defined VCPKG_ROOT if exist "%VCPKG_ROOT%\vcpkg.exe" set "VCPKG_EXE=%VCPKG_ROOT%\vcpkg.exe"
+if not defined VCPKG_EXE if exist "%SCRIPT_DIR%\vcpkg\vcpkg.exe" set "VCPKG_EXE=%SCRIPT_DIR%\vcpkg\vcpkg.exe"
+if not defined VCPKG_EXE (
+    where vcpkg.exe >nul 2>nul
+    if not errorlevel 1 set "VCPKG_EXE=vcpkg"
+)
+if not defined VCPKG_EXE (
+    echo [ERROR] vcpkg not found. Install vcpkg and set VCPKG_ROOT,
+    echo         e.g. set "VCPKG_ROOT=C:\vcpkg"   ^(folder containing vcpkg.exe^)
+    goto :eof
+)
+if not exist "%SCRIPT_DIR%\vcpkg.json" (
+    echo [ERROR] %SCRIPT_DIR%\vcpkg.json not found - cannot run manifest-mode install.
+    goto :eof
+)
+
+echo [INFO] Using vcpkg: %VCPKG_EXE%
+pushd "%SCRIPT_DIR%"
+"%VCPKG_EXE%" install --triplet x64-windows
+set "VCPKG_ERR=%errorlevel%"
+popd
+if not "%VCPKG_ERR%"=="0" echo [ERROR] vcpkg install failed with code %VCPKG_ERR%.
+goto :eof
+
+:help
+echo Usage: build.bat [--clean] [--verbose] [--type Release^|Debug^|RelWithDebInfo]
+echo   Env: DEEPX_SDK_DIR, OpenCV_DIR (auto-defaulted; OpenCV auto-installed via vcpkg if missing)
+endlocal
+exit /b 0

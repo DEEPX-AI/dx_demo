@@ -1,90 +1,104 @@
 #!/bin/bash
+# Lightweight model downloader (dx_app-style URL manifest, no Python).
+# Reads scripts/model_manifest.json and downloads each "dxnn_url" into the
+# output dir under its "filename" (the name the demo configs expect).
 SCRIPT_DIR=$(realpath "$(dirname "$0")")
 
-# color env settings
-source ${SCRIPT_DIR}/color_env.sh
-source ${SCRIPT_DIR}/common_util.sh
+# color env settings (optional)
+source ${SCRIPT_DIR}/color_env.sh 2>/dev/null || true
+source ${SCRIPT_DIR}/common_util.sh 2>/dev/null || true
 
-BASE_URL="https://sdk.deepx.ai/"
-
-# default value
-SOURCE_PATH="res/models/models-2_2_0.tar.gz"
-OUTPUT_DIR="$SCRIPT_DIR/../assets/models"
+MANIFEST="${SCRIPT_DIR}/model_manifest.json"
+OUTPUT_DIR="${SCRIPT_DIR}/../assets/models"
 SYMLINK_TARGET_PATH=""
-SYMLINK_ARGS=""
-FORCE_ARGS=""
+FORCE=0
 
-# Function to display help message
+log()  { echo "[DXDEMO] [INFO]  $*"; }
+err()  { echo "[DXDEMO] [ERROR] $*" >&2; }
+
 show_help() {
-  
-  echo "Usage: $(basename "$0") [OPTIONS]"
-  echo "Options:"
-  echo "  [--force]                  Force overwrite if the file already exists"
-  echo "  [--help]                   Show this help message"
-
-  if [ "$1" == "error" ]; then
-    echo "Error: Invalid or missing arguments."
-    exit 1
-  fi
-  exit 0
+    echo "Usage: $(basename "$0") [OPTIONS]"
+    echo "Options:"
+    echo "  [--output=<dir>]                 Output directory (default: ../assets/models)"
+    echo "  [--symlink_target_path=<dir>]    Download here, then symlink output -> here"
+    echo "  [--manifest=<file>]              Model manifest json (default: scripts/model_manifest.json)"
+    echo "  [--force]                        Re-download even if the file already exists"
+    echo "  [--help]                         Show this help message"
+    [ "$1" == "error" ] && exit 1
+    exit 0
 }
 
-main() {
-    SCRIPT_DIR=$(realpath "$(dirname "$0")")
-    GET_RES_CMD="$SCRIPT_DIR/get_resource.sh --src_path=$SOURCE_PATH --output=$OUTPUT_DIR $SYMLINK_ARGS $FORCE_ARGS --extract"
-    echo "Get Resources from remote server ..."
-    echo "$GET_RES_CMD"
-
-    $GET_RES_CMD || {
-        local error_msg="Get resource failed!"
-        local hint_msg="If the issue persists, please try again with sudo and the --force option, like this: 'sudo ./setup_sample_models.sh --force'."
-        local origin_cmd="" # no need to run origin command
-        local suggested_action_cmd="sudo $GET_RES_CMD --force"
-
-        # handle_cmd_failure function arguments
-        #   - local error_message=$1
-        #   - local hint_message=$2
-        #   - local origin_cmd=$3
-        #   - local suggested_action_cmd=$4
-        handle_cmd_failure "$error_msg" "$hint_msg" "$origin_cmd" "$suggested_action_cmd"
-    }
-}
-
-# parse args
-for i in "$@"; do
+# --- parse args ---
+for _ in "$@"; do
     case "$1" in
-        --src_path=*)
-            SOURCE_PATH="${1#*=}"
-            ;;
-        --output=*)
-            OUTPUT_DIR="${1#*=}"
-
-            # Symbolic link cannot be created when output_dir is the current directory.
-            OUTPUT_REAL_DIR=$(readlink -f "$OUTPUT_DIR")
-            CURRENT_REAL_DIR=$(readlink -f "./")
-            if [ "$OUTPUT_REAL_DIR" == "$CURRENT_REAL_DIR" ]; then
-                echo "'--output' is the same as the current directory. Please specify a different directory."
-                exit 1
-            fi
-            ;;
-        --symlink_target_path=*)
-            SYMLINK_TARGET_PATH="${1#*=}"
-            SYMLINK_ARGS="--symlink_target_path=$SYMLINK_TARGET_PATH"
-            ;;
-        --force)
-            FORCE_ARGS="--force"
-            ;;
-        --help)
-            show_help
-            ;;
-        *)
-            echo "Unknown option: $1"
-            show_help "error"
-            ;;
+        --output=*)               OUTPUT_DIR="${1#*=}" ;;
+        --symlink_target_path=*)   SYMLINK_TARGET_PATH="${1#*=}" ;;
+        --manifest=*)              MANIFEST="${1#*=}" ;;
+        --force)                   FORCE=1 ;;
+        --help)                    show_help ;;
+        "")                        ;;
+        *)                         echo "Unknown option: $1"; show_help "error" ;;
     esac
     shift
 done
 
-main
+[ -f "$MANIFEST" ] || { err "manifest not found: $MANIFEST"; exit 1; }
 
+# --- pick a downloader ---
+if command -v curl >/dev/null 2>&1; then
+    fetch() { curl -fL --retry 3 --connect-timeout 15 -o "$1" "$2"; }
+elif command -v wget >/dev/null 2>&1; then
+    fetch() { wget -q -O "$1" "$2"; }
+else
+    err "neither curl nor wget is available."; exit 1
+fi
+
+# --- parse manifest (dxnn_url list; local filename = URL basename) ---
+mapfile -t URLS < <(grep -oE '"dxnn_url"[[:space:]]*:[[:space:]]*"[^"]*"' "$MANIFEST" | sed -E 's/.*"([^"]*)"[[:space:]]*$/\1/')
+
+if [ "${#URLS[@]}" -eq 0 ]; then
+    err "manifest parse failed: no dxnn_url found in $MANIFEST"
+    exit 1
+fi
+
+# --- resolve download dir (honor symlink target, like dx_app) ---
+if [ -n "$SYMLINK_TARGET_PATH" ]; then
+    DL_DIR="$SYMLINK_TARGET_PATH"
+else
+    DL_DIR="$OUTPUT_DIR"
+fi
+mkdir -p "$DL_DIR" || { err "cannot create $DL_DIR"; exit 1; }
+
+# --- download ---
+for i in "${!URLS[@]}"; do
+    url="${URLS[$i]}"
+    fn="${url##*/}"          # local filename = original name from the URL
+    dst="${DL_DIR}/${fn}"
+    if [ -f "$dst" ] && [ "$FORCE" -ne 1 ]; then
+        log "already exists, skip: $fn (use --force to re-download)"
+        continue
+    fi
+    log "downloading $fn"
+    log "  <- $url"
+    if ! fetch "${dst}.part" "$url"; then
+        err "download failed: $url"
+        rm -f "${dst}.part"
+        exit 1
+    fi
+    mv -f "${dst}.part" "$dst"
+done
+
+# --- symlink output -> target (share one models dir across demos) ---
+if [ -n "$SYMLINK_TARGET_PATH" ]; then
+    ABS_TARGET="$(readlink -f "$SYMLINK_TARGET_PATH")"
+    ABS_OUTPUT="$(readlink -f "$OUTPUT_DIR" 2>/dev/null || echo "$OUTPUT_DIR")"
+    if [ "$ABS_TARGET" != "$ABS_OUTPUT" ]; then
+        { [ -L "$OUTPUT_DIR" ] || [ -d "$OUTPUT_DIR" ]; } && rm -rf "$OUTPUT_DIR"
+        mkdir -p "$(dirname "$OUTPUT_DIR")"
+        ln -s "$ABS_TARGET" "$OUTPUT_DIR"
+        log "linked: $OUTPUT_DIR -> $ABS_TARGET"
+    fi
+fi
+
+log "model setup complete -> $(readlink -f "$OUTPUT_DIR")"
 exit 0
