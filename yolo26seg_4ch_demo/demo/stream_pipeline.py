@@ -57,10 +57,15 @@ class StreamPipeline:
         loop: bool = False,
         source_size_callback: Optional[Callable[[int, int, int], None]] = None,
         pace_fps: bool = False,
+        class_filter_provider: Optional[Callable[[], Optional[object]]] = None,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ):
         self.channel_id = channel_id
+        # Returns the currently-selected class-id set (or None to keep all).
+        # Called on the meta pad probe to prune object metas before dxosd so the
+        # HW overlay honours the class-filter checkboxes.
+        self.class_filter_provider = class_filter_provider
         self.pipeline_str = pipeline_str
         self.bridge = bridge
         self.frame_callback = frame_callback
@@ -361,6 +366,15 @@ class StreamPipeline:
             if buf is None:
                 return self._gst.PadProbeReturn.OK
             self._maybe_report_source_size(pad)
+            # Prune object metas to the selected classes before dxosd (downstream)
+            # bakes the masks/boxes into the frame. Done first so the stashed
+            # detections mirror exactly what the overlay draws.
+            if self.class_filter_provider is not None:
+                try:
+                    selected = self.class_filter_provider()
+                except Exception:  # pragma: no cover - defensive
+                    selected = None
+                self.bridge.filter_frame_meta(info, selected)
             detections = self.bridge.detections_for_buffer(buf)
             pts = self._buffer_pts(buf)
             if pts is not None:

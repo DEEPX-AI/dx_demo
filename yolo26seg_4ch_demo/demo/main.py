@@ -814,6 +814,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 loop=ch_cfg.get("type", "video") == "video",
                 source_size_callback=self._on_native_source_size,
                 pace_fps=sync_to_fps,
+                class_filter_provider=self.get_selected_classes,
             )
             self.stream_pipelines.append(pipe)
 

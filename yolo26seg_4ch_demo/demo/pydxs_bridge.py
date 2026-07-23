@@ -9,7 +9,7 @@ which lets the rest of the pipeline wiring be unit-tested without HW.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Optional, Set
 
 import numpy as np
 
@@ -71,3 +71,30 @@ class PydxsBridge:
             self.last_meta_present = None
             self.last_obj_count = 0
             return _EMPTY.copy()
+
+    def filter_frame_meta(self, probe_info, selected: Optional[Set[int]]) -> int:
+        """Remove object metas whose class label is not in ``selected``.
+
+        Run on the pad probe upstream of ``dxosd`` so the HW overlay only draws
+        the selected classes (the segmentation masks/boxes are baked in by
+        ``dxosd`` from ``object_meta_list``, so filtering the Python-side
+        detection copy alone has no visible effect). ``selected=None`` keeps all.
+        Returns the number of objects removed. Never raises.
+        """
+        if self._pydxs is None or selected is None:
+            return 0
+        try:
+            # writable_buffer wants the GstPadProbeInfo address (hash(info)) and
+            # returns the buffer's DXFrameMeta made writable in place.
+            with self._pydxs.writable_buffer(hash(probe_info)) as frame_meta:
+                if frame_meta is None:
+                    return 0
+                removed = 0
+                for obj in list(frame_meta.object_meta_list):
+                    if int(obj.label) not in selected:
+                        self._pydxs.dx_remove_obj_meta_from_frame(frame_meta, obj)
+                        removed += 1
+                return removed
+        except Exception as exc:  # pragma: no cover - board-only path
+            logger.debug("pydxs meta filter failed: %s", exc)
+            return 0
