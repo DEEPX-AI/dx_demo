@@ -37,7 +37,11 @@ param(
 Set-StrictMode -Off
 $ErrorActionPreference = "Stop"
 
-$SCRIPT_DIR = $PSScriptRoot
+# This script lives in <demo>\scripts. SCRIPTS_DIR = its own dir; SCRIPT_DIR =
+# the demo root (parent), so all the ..\assets / ..\workspace paths below stay
+# relative to the demo root as before.
+$SCRIPTS_DIR = $PSScriptRoot
+$SCRIPT_DIR  = Split-Path $PSScriptRoot -Parent
 
 # Resolve paths (may not exist yet)
 function Resolve-PathSafe {
@@ -136,13 +140,13 @@ function Invoke-SetupAssets {
     if (-not (Test-Path $MODEL_REAL_PATH) -or $forceModel) {
         Write-Colored " models directory not found. Running setup models script... ($MODEL_REAL_PATH)" "INFO"
 
+        # Windows: download straight into assets\models (real folder, no symlink).
         $modelParams = @{
-            Output              = $MODEL_PATH
-            SymlinkTargetPath   = $script:SYMLINK_TARGET_PATH
+            Output = $MODEL_PATH
         }
         if ($forceModel) { $modelParams['Force'] = $true }
 
-        & "$SCRIPT_DIR\scripts\setup_sample_models.ps1" @modelParams
+        & "$SCRIPTS_DIR\setup_sample_models.ps1" @modelParams
         if ($LASTEXITCODE -ne 0) {
             Write-Colored "Setup models script failed." "ERROR"
             if (Test-Path $MODEL_PATH) { Remove-Item -Recurse -Force $MODEL_PATH }
@@ -162,13 +166,13 @@ function Invoke-SetupAssets {
     if (-not (Test-Path $VIDEO_REAL_PATH) -or $forceVideo) {
         Write-Colored " Video directory not found. Running setup videos script... ($VIDEO_REAL_PATH)" "INFO"
 
+        # Windows: download straight into assets\videos (real folder, no symlink).
         $videoParams = @{
-            Output              = $VIDEO_PATH
-            SymlinkTargetPath   = $script:SYMLINK_TARGET_PATH
+            Output = $VIDEO_PATH
         }
         if ($forceVideo) { $videoParams['Force'] = $true }
 
-        & "$SCRIPT_DIR\scripts\setup_sample_videos.ps1" @videoParams
+        & "$SCRIPTS_DIR\setup_sample_videos.ps1" @videoParams
         if ($LASTEXITCODE -ne 0) {
             Write-Colored "Setup videos script failed." "ERROR"
             if (Test-Path $VIDEO_PATH) { Remove-Item -Recurse -Force $VIDEO_PATH }

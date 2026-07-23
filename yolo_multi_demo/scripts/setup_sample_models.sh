@@ -61,9 +61,12 @@ if [ "${#URLS[@]}" -eq 0 ]; then
     exit 1
 fi
 
-# --- resolve download dir (honor symlink target, like dx_app) ---
+# --- resolve download dir ---
+# When a symlink target is given, download into a dedicated <target>/models
+# subdir (mirrors videos' <target>/sample_videos), so assets/models -> that
+# subdir contains ONLY the model files (not the shared workspace root).
 if [ -n "$SYMLINK_TARGET_PATH" ]; then
-    DL_DIR="$SYMLINK_TARGET_PATH"
+    DL_DIR="$SYMLINK_TARGET_PATH/models"
 else
     DL_DIR="$OUTPUT_DIR"
 fi
@@ -88,16 +91,14 @@ for i in "${!URLS[@]}"; do
     mv -f "${dst}.part" "$dst"
 done
 
-# --- symlink output -> target (share one models dir across demos) ---
-if [ -n "$SYMLINK_TARGET_PATH" ]; then
-    ABS_TARGET="$(readlink -f "$SYMLINK_TARGET_PATH")"
-    ABS_OUTPUT="$(readlink -f "$OUTPUT_DIR" 2>/dev/null || echo "$OUTPUT_DIR")"
-    if [ "$ABS_TARGET" != "$ABS_OUTPUT" ]; then
-        { [ -L "$OUTPUT_DIR" ] || [ -d "$OUTPUT_DIR" ]; } && rm -rf "$OUTPUT_DIR"
-        mkdir -p "$(dirname "$OUTPUT_DIR")"
-        ln -s "$ABS_TARGET" "$OUTPUT_DIR"
-        log "linked: $OUTPUT_DIR -> $ABS_TARGET"
-    fi
+# --- symlink output -> download dir (share models across demos, keep clean) ---
+ABS_DL="$(readlink -f "$DL_DIR")"
+ABS_OUTPUT="$(readlink -f "$OUTPUT_DIR" 2>/dev/null || echo "$OUTPUT_DIR")"
+if [ "$ABS_DL" != "$ABS_OUTPUT" ]; then
+    { [ -L "$OUTPUT_DIR" ] || [ -d "$OUTPUT_DIR" ]; } && rm -rf "$OUTPUT_DIR"
+    mkdir -p "$(dirname "$OUTPUT_DIR")"
+    ln -s "$ABS_DL" "$OUTPUT_DIR"
+    log "linked: $OUTPUT_DIR -> $ABS_DL"
 fi
 
 log "model setup complete -> $(readlink -f "$OUTPUT_DIR")"

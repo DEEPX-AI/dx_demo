@@ -3,8 +3,8 @@
 .SYNOPSIS
     Windows equivalent of setup_sample_models.sh
     Lightweight model downloader (dx_app-style URL manifest, no Python).
-    Reads scripts\model_manifest.json and downloads each "dxnn_url" into the
-    output dir under its "filename" (the name the demo configs expect).
+    Reads scripts\model_manifest.json and downloads each "dxnn_url" straight
+    into assets\models under its original filename (URL basename). No symlink.
 #>
 [CmdletBinding()]
 param(
@@ -27,7 +27,7 @@ function Show-Help {
     Write-Host "Usage: $(Split-Path $PSCommandPath -Leaf) [OPTIONS]"
     Write-Host "Options:"
     Write-Host "  [-Output <path>]                 Output directory (default: ..\assets\models)"
-    Write-Host "  [-SymlinkTargetPath <path>]      Download here, then symlink output -> here"
+    Write-Host "  [-SymlinkTargetPath <path>]      Ignored on Windows (kept for call-compatibility)"
     Write-Host "  [-Manifest <file>]               Model manifest json (default: scripts\model_manifest.json)"
     Write-Host "  [-Force]                         Re-download even if the file already exists"
     Write-Host "  [-Help]                          Show this help message"
@@ -49,8 +49,11 @@ try {
     exit 1
 }
 
-# --- resolve download dir (honor symlink target, like dx_app) ---
-if ($SymlinkTargetPath) { $DlDir = $SymlinkTargetPath } else { $DlDir = $Output }
+# --- resolve download dir ---
+# Windows: download straight into the output dir (assets\models) as a real
+# folder. No symlink (SymlinkTargetPath is accepted for call-compatibility but
+# ignored on Windows, where symlinks need admin/developer mode).
+$DlDir = $Output
 New-Item -ItemType Directory -Force -Path $DlDir | Out-Null
 
 # --- download ---
@@ -75,23 +78,6 @@ foreach ($e in $entries) {
         Write-Host "[DXDEMO] [ERROR] download failed: $url" -ForegroundColor Red
         if (Test-Path "$dst.part") { Remove-Item -Force "$dst.part" }
         exit 1
-    }
-}
-
-# --- symlink output -> target (best effort; needs privilege/developer mode) ---
-if ($SymlinkTargetPath) {
-    $absTarget = (Resolve-Path $SymlinkTargetPath).Path
-    $absOutput = if (Test-Path $Output) { (Resolve-Path $Output).Path } else { $Output }
-    if ($absTarget -ne $absOutput) {
-        if (Test-Path $Output) { Remove-Item -Recurse -Force $Output }
-        New-Item -ItemType Directory -Force -Path (Split-Path $Output -Parent) | Out-Null
-        try {
-            New-Item -ItemType SymbolicLink -Path $Output -Target $absTarget -Force | Out-Null
-            Write-Host "[DXDEMO] [INFO]  linked: $Output -> $absTarget"
-        } catch {
-            Write-Host "[DXDEMO] [WARN]  symlink failed (no privilege?); copying instead." -ForegroundColor Yellow
-            Copy-Item -Recurse -Force $absTarget $Output
-        }
     }
 }
 
