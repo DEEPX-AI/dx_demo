@@ -80,6 +80,7 @@ struct AppConfig
     float sidebar_font_scale; // 1.0 = default, <1.0 smaller, >1.0 larger
     float fps_value_font_scale; // 0.5 = default
     int display_fps; // max FPS for imshow rendering (0 = unlimited)
+    int console_fps_period_ms; // periodic FPS log to terminal (0 = disabled)
 };
 
 // pre/post parameter table
@@ -109,6 +110,9 @@ const char* usage =
 "                      e.g. sudo yolo_multi -c _multi_od_.json -a \n"
 "      --window_size    FPS by average over the last {window_size} seconds (default: 60)\n"
 "                      e.g. sudo yolo_multi -c _multi_od_.json --window_size 60\n"
+"      --fps_log_period  print FPS to terminal every N ms (0 = off,\n"
+"                      default: 1000 on Windows, 0 on others)\n"
+"                      e.g. yolo_multi -c _multi_od_.json --fps_log_period 500\n"
 "  -h, --help          show help\n"
 ;
 
@@ -272,6 +276,19 @@ int ApplicationJsonParser(std::string configPath, AppConfig* dst)
         {
             DXRT_ASSERT(displayConfig["fps_value_font_scale"].IsNumber(), "ERR. fps_value_font_scale must be number");
             dst->fps_value_font_scale = (float)displayConfig["fps_value_font_scale"].GetDouble();
+        }
+
+        // Windows: 화면에 헤더 HUD(FPS 카드)를 그리지 않으므로 콘솔 FPS 로그를
+        //          기본 활성화한다. 다른 OS는 기본 비활성(HUD로 확인 가능).
+#ifdef _WIN32
+        dst->console_fps_period_ms = 1000;
+#else
+        dst->console_fps_period_ms = 0;
+#endif
+        if(displayConfig.HasMember("console_fps_period_ms"))
+        {
+            DXRT_ASSERT(displayConfig["console_fps_period_ms"].IsInt(), "ERR. console_fps_period_ms must be integer");
+            dst->console_fps_period_ms = displayConfig["console_fps_period_ms"].GetInt();
         }
 
         DXRT_ASSERT(doc.HasMember("video_sources"), "ERR. video_sources argument not placed");
@@ -1216,6 +1233,7 @@ DXRT_TRY_CATCH_BEGIN
     std::string configPath = "";
     double frameCount = 0.0, window_size = 60.0;
     bool loggingVersion = false;
+    int fpsLogPeriodMs = 0; // CLI override for console FPS log period (ms)
 
     AppConfig appConfig;
 
@@ -1224,6 +1242,7 @@ DXRT_TRY_CATCH_BEGIN
         ("c, config", "(* required) use config json file for run application", cxxopts::value<std::string>(configPath))
         ("t, test", "test mode", cxxopts::value<bool>(loggingVersion)->default_value("false"))
         ("window_size", "FPS by average over the last {window_size} seconds (default: 60)", cxxopts::value<double>(window_size)->default_value("60"))
+        ("fps_log_period", "print FPS to terminal every N ms (0 = off)", cxxopts::value<int>(fpsLogPeriodMs))
         ("h, help", "print usage")
     ;
     auto cmd = options.parse(argc, argv);
@@ -1248,12 +1267,22 @@ DXRT_TRY_CATCH_BEGIN
 
     LOG_VALUE(configPath);
 
+    // CLI(--fps_log_period)가 주어지면 JSON 설정보다 우선한다.
+    if(cmd.count("fps_log_period"))
+        appConfig.console_fps_period_ms = std::max(0, fpsLogPeriodMs);
+
     const int BOARD_WIDTH = appConfig.board_width;
     const int BOARD_HEIGHT = appConfig.board_height;
 
     // 상단 타이틀 바 높이 (통합 HUD 헤더)
+    // Windows: 디스플레이 창에서 헤더 패널(로고/모델/FPS 카드)이 깨져서
+    //          헤더를 완전히 제거하고 그리드가 전체 높이를 사용하도록 함.
+#ifdef _WIN32
+    const int TITLE_HEIGHT = 0;
+#else
     const int HEADER_MIN_HEIGHT = 90;
     const int TITLE_HEIGHT = std::max(HEADER_MIN_HEIGHT, (int)(BOARD_HEIGHT * 0.105));
+#endif
     const int GRID_WIDTH = BOARD_WIDTH;
 
     // 그리드 크기 결정: JSON에 명시되면 사용, 아니면 자동(sqrt)
@@ -1573,6 +1602,16 @@ DXRT_TRY_CATCH_BEGIN
         ? std::max(1, 1000 / appConfig.display_fps)
         : 1;
 
+    // --- Console FPS log ---
+    // 터미널에 주기적으로 FPS를 출력 (Windows 기본 1초, 0이면 비활성).
+    const int console_fps_period_ms = appConfig.console_fps_period_ms;
+    auto lastFpsLog = std::chrono::steady_clock::now();
+    if(console_fps_period_ms > 0)
+    {
+        std::cout << "[FPS] console log enabled (every " << console_fps_period_ms
+                  << " ms, avg window " << window_size << " s)" << std::endl;
+    }
+
     // Per-app dirty tracking: only copyTo when the app produced a new frame.
     std::vector<uint64_t> lastRenderCounts(apps.size(), UINT64_MAX);
 
@@ -1692,6 +1731,31 @@ DXRT_TRY_CATCH_BEGIN
             }
         }
 
+        if(console_fps_period_ms > 0)
+        {
+            auto nowLog = std::chrono::steady_clock::now();
+            if(std::chrono::duration_cast<std::chrono::milliseconds>(nowLog - lastFpsLog).count()
+                    >= console_fps_period_ms)
+            {
+                lastFpsLog = nowLog;
+                int activeStreams = (int)appConfig.video_sources.size();
+                if(!calcFps)
+                {
+                    std::cout << "[FPS] measuring..." << std::endl;
+                }
+                else
+                {
+                    float avgFps = (activeStreams > 0) ? (resultFps / activeStreams) : 0.f;
+                    std::cout << "[FPS] elapsed " << (duration / 1000) << "s"
+                              << " | Total " << fpsValueText(resultFps)
+                              << " | AVG " << fpsValueText(avgFps)
+                              << " (" << activeStreams << " ch)" << std::endl;
+                }
+            }
+        }
+
+#ifndef _WIN32
+        // Windows: 헤더 패널이 깨져 표시되므로 그리지 않음 (TITLE_HEIGHT == 0)
         renderHeaderHud(outFrame,
                         BOARD_WIDTH, TITLE_HEIGHT,
                         (int)appConfig.video_sources.size(),
@@ -1701,6 +1765,7 @@ DXRT_TRY_CATCH_BEGIN
                         calcFps,
                         appConfig.model_name,
                         appConfig.fps_value_font_scale);
+#endif
         sl.frameNumber = std::min(allFrameCount, (uint64_t)UINT_MAX);  // 오버플로우 방지
         sl.runningTime = duration;
         if (loggingVersion)
@@ -1739,6 +1804,18 @@ DXRT_TRY_CATCH_BEGIN
                 app->Stop();
             }
             log_thread.join();
+            // 콘솔 FPS 로그가 켜져 있으면(Windows 기본) 종료 시 최종 요약을 출력한다.
+            if(console_fps_period_ms > 0)
+            {
+                int activeStreams = (int)appConfig.video_sources.size();
+                float avgFps = (activeStreams > 0) ? (resultFps / activeStreams) : 0.f;
+                std::cout << "\n========================================\n"
+                          << " Final FPS Summary\n"
+                          << "   Total FPS : " << fpsValueText(resultFps) << "\n"
+                          << "   AVG FPS   : " << fpsValueText(avgFps)
+                          << "  (over " << activeStreams << " channels)\n"
+                          << "========================================" << std::endl;
+            }
             break;
         }
         else if(key == 0x74) // 't'

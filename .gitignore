@@ -11,3 +11,4 @@ yolo_multi_demo/build_x86_64/
 **/vcpkg_installed/
 **/build_windows/
 **/build_x64/
+**/build/

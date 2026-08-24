@@ -115,6 +115,13 @@ if not exist "%SCRIPT_DIR%\vcpkg.json" (
 
 echo [INFO] Using vcpkg: %VCPKG_EXE%
 pushd "%SCRIPT_DIR%"
+rem vcpkg rejects a manifest that uses "overrides" without a "builtin-baseline".
+rem Stamp the current vcpkg checkout's HEAD into vcpkg.json if it isn't there yet.
+findstr /c:"builtin-baseline" vcpkg.json >nul 2>nul
+if errorlevel 1 (
+    echo [INFO] vcpkg.json has no builtin-baseline - adding one from the vcpkg checkout.
+    "%VCPKG_EXE%" x-update-baseline --add-initial-baseline
+)
 "%VCPKG_EXE%" install --triplet x64-windows
 set "VCPKG_ERR=%errorlevel%"
 popd
