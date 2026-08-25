@@ -69,6 +69,124 @@ Example (part of `video_sources`):
 ]
 ```
 
+## Stage Profiling (Linux vs Windows)
+
+The demo can write a per-stage timing log so the same workload can be compared
+between platforms. Nothing is measured unless profiling is turned on.
+
+### Recording a log
+
+```bash
+# Linux
+./run_demo.sh --profile                       # -> profile_linux_<N>ch_<timestamp>.log
+./bin/yolo_multi_demo -c config/ppu_yolo_multi_640_demo.json --profile linux.log
+```
+
+```bat
+REM Windows
+yolo_multi_demo.exe -c config\ppu_yolo_multi_640_demo.json --profile
+```
+
+Run both sides for at least 60 seconds, then exit with `ESC` / `q` / the window
+`X`. **The cumulative summary and the CSV block are written on exit**, so a
+`kill -9` or a closed terminal leaves an incomplete log.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--profile [path]` | off | Enable profiling. With no path, `profile_<os>_<N>ch_<timestamp>.log` is used. |
+| `--profile_period <ms>` | 5000 | Interval-snapshot dump period |
+| `--profile_warmup <ms>` | 3000 | Samples before this are discarded (model load, cache warm-up, first decode) |
+
+It can also be enabled from the config json, in a top-level `profile` block
+(the CLI options take precedence):
+
+```json
+"profile": {
+    "enabled": true,
+    "path": "",
+    "period_ms": 5000,
+    "warmup_ms": 3000,
+    "per_channel": true
+}
+```
+
+### What each stage means
+
+Per-channel worker thread (`ObjectDetection::threadFunc`):
+
+| Stage | Measures |
+|-------|----------|
+| `worker.loop` | Interval between loop iterations = this channel's actual frame period |
+| `worker.busy` | Work per iteration, excluding sleep |
+| `worker.get_input` | Capture/decode + letterbox resize (`VideoStream::GetInputStream`) |
+| `worker.run_async` | NPU inference enqueue (`InferenceEngine::RunAsync`) |
+| `worker.bbox` | bbox coordinate scaling (includes `_lock` wait) |
+| `worker.get_output` | Source resize + bbox drawing (`GetOutputStream`) |
+| `worker.badge` | `CH n` badge drawing |
+| `worker.frame_swap` | Result frame swap (includes `_frameLock` wait) |
+| `worker.sleep_req` / `worker.sleep_act` | Requested vs **actual** sleep time |
+
+dxrt callback thread:
+
+| Stage | Measures |
+|-------|----------|
+| `post.lock_wait` | Waiting for `_lock` |
+| `post.yolo` | YOLO decode + NMS on the CPU |
+| `post.gap` | Interval between callbacks = the channel's real inference rate (its FPS) |
+| `npu.infer` / `npu.latency` | Values reported by dxrt |
+
+Main render thread:
+
+| Stage | Measures |
+|-------|----------|
+| `main.loop` / `main.busy` | Render loop period / work per iteration |
+| `main.compose` | Copying each channel's result frame into the output board |
+| `main.fps_calc` | FPS aggregation |
+| `main.hud` | Header HUD rendering (Linux only) |
+| `main.imshow` | `cv::imshow` |
+| `main.waitkey` | `cv::waitKey(1)` |
+| `main.winprop` | `cv::getWindowProperty` (window-closed check) |
+| `main.sleep_req` / `main.sleep_act` | Requested vs actual sleep time |
+
+The `cpu-ms/s` column is the total time a stage consumed per second summed over
+all channels, so the largest number is the bottleneck.
+
+The log header also records the NPU devices actually present (`dxrt` reports
+them, so this is independent of the config's display-only `num_devices`), the
+raw text of the config json, an estimate of how much memory the preload frame
+buffers take, and the process/system memory state.
+
+Every interval report carries a `[memory]` line:
+
+```
+[memory] rss 4475 MB | commit 9839 MB | peak_rss 4475 MB | sys_avail 23090/31965 MB | major_faults +18432 (3672/s)
+```
+
+A fault rate that stays high means the working set does not fit in physical
+memory and pages are being re-read from disk — the usual cause of a stage whose
+`avg` is many times its `p50`. On Linux the counter is major faults only (real
+disk I/O); on Windows no per-process hard-fault counter exists, so it is the
+total fault count (soft faults included) and only its *rate* is meaningful.
+
+The header also records the OS, CPU, RAM, compiler, the full OpenCV build
+information, and two probes that often explain a platform gap on their own:
+
+- `clock.granularity_us` — resolution of `steady_clock`
+- `sleep(1ms).actual_ms` — how long a 1 ms sleep really takes. Windows runs a
+  15.6 ms default timer tick unless something has raised it, which makes every
+  `Sleep()` in the pipeline overshoot. Compare this against `sleep_req` vs
+  `sleep_act` in the tables.
+
+### Comparing two logs
+
+```bash
+python3 scripts/compare_profile.py profile_linux_8ch_*.log profile_win_8ch_*.log
+```
+
+It prints the environment differences (mismatches marked `!!`), then a
+stage table sorted by the largest absolute difference in total time, with a
+`B/A` ratio per stage and `<<<` on anything differing by 30% or more.
+
 ## Screenshots
 
 **0: Multi Channel Object Detection**

@@ -31,6 +31,7 @@ public:
     cv::Mat ResultFrame();
     std::pair<int, int> Position();
     std::pair<int, int> Resolution();
+    std::pair<int, int> SourceResolution() const { return std::make_pair(_srcWidth, _srcHeight); }
     uint64_t GetInferenceTime();
     uint64_t GetLatencyTime();
     uint64_t GetProcessingTime();
@@ -62,8 +63,8 @@ private:
     std::atomic<uint64_t> _ret_processed_count{0};
     std::chrono::high_resolution_clock::time_point _fps_time_s;
     std::chrono::high_resolution_clock::time_point _fps_time_e;
-    int _srcWidth;
-    int _srcHeight;
+    int _srcWidth = 0;
+    int _srcHeight = 0;
     int _width;
     int _height;
     int _destWidth;

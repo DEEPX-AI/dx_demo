@@ -1,0 +1,502 @@
+================================================================================
+ DXPROF - yolo_multi_demo stage profile
+================================================================================
+date               : 2026-08-25 17:36:04
+os                 : Windows 10.0 (build 26100)
+cpu                : AMD Ryzen Embedded R2314 with Radeon Graphics
+cpu.hw_threads     : 4
+ram.total_mb       : 5999
+compiler           : MSVC 1944
+build              : Release (NDEBUG)
+gst.vaapi          : OFF
+opencv.version     : 4.5.5
+opencv.threads     : 4 / cpus 4
+opencv.optimized   : yes
+opencv.avx2        : yes
+opencv.sse4_2      : yes
+clock.granularity_us : 0.100
+sleep(1ms).actual_ms : 15.102
+sleep(5ms).actual_ms : 17.397
+--------------------------------------------------------------------------------
+[demo config]
+config.path        : ppu_yolo_multi_demo.json
+model.path         : C:/Users/deepx/dx_assets/models/yolov5-s_640x640_ppu.dxnn
+model.name         : yolov5s_640_ppu
+channels           : 9
+grid               : 3 x 3
+cell               : 512 x 288
+board              : 1536 x 864 (title 0)
+capture_period_ms  : 30
+display_fps        : 30
+num_devices        : 1
+preload_frames     : 60 60 60 60 60 60 60 60 ...
+dxrt.version       : v3.4.2
+npu.devices        : 1
+--------------------------------------------------------------------------------
+[OpenCV build information]
+
+General configuration for OpenCV 4.5.5 =====================================
+  Version control:               unknown
+
+  Platform:
+    Timestamp:                   2026-08-19T11:31:02Z
+    Host:                        Windows 10.0.26100 AMD64
+    CMake:                       3.30.1
+    CMake generator:             Ninja
+    CMake build tool:            C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe
+    MSVC:                        1944
+    Configuration:               Release
+
+  CPU/HW features:
+    Baseline:                    SSE SSE2 SSE3
+      requested:                 SSE3
+    Dispatched code generation:  SSE4_1 SSE4_2 FP16 AVX AVX2 AVX512_SKX
+      requested:                 SSE4_1 SSE4_2 AVX FP16 AVX2 AVX512_SKX
+      SSE4_1 (14 files):         + SSSE3 SSE4_1
+      SSE4_2 (1 files):          + SSSE3 SSE4_1 POPCNT SSE4_2
+      FP16 (0 files):            + SSSE3 SSE4_1 POPCNT SSE4_2 FP16 AVX
+      AVX (4 files):             + SSSE3 SSE4_1 POPCNT SSE4_2 AVX
+      AVX2 (29 files):           + SSSE3 SSE4_1 POPCNT SSE4_2 FP16 FMA3 AVX AVX2
+      AVX512_SKX (5 files):      + SSSE3 SSE4_1 POPCNT SSE4_2 FP16 FMA3 AVX AVX2 AVX_512F AVX512_COMMON AVX512_SKX
+
+  C/C++:
+    Built as dynamic libs?:      YES
+    C++ standard:                11
+    C++ Compiler:                C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe  (ver 19.44.35215.0)
+    C++ flags (Release):         /nologo /DWIN32 /D_WINDOWS /utf-8 /GR /MP   /D _CRT_SECURE_NO_DEPRECATE /D _CRT_NONSTDC_NO_DEPRECATE /D _SCL_SECURE_NO_WARNINGS /Gy /bigobj /Oi  /fp:precise /FS     /EHa /wd4127 /wd4251 /wd4324 /wd4275 /wd4512 /wd4589  /MD /O2 /Oi /Gy /DNDEBUG /Z7  
+    C++ flags (Debug):           /nologo /DWIN32 /D_WINDOWS /utf-8 /GR /MP   /D _CRT_SECURE_NO_DEPRECATE /D _CRT_NONSTDC_NO_DEPRECATE /D _SCL_SECURE_NO_WARNINGS /Gy /bigobj /Oi  /fp:precise /FS     /EHa /wd4127 /wd4251 /wd4324 /wd4275 /wd4512 /wd4589  /MDd /Z7 /Ob0 /Od /RTC1  
+    C Compiler:                  C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe
+    C flags (Release):           /nologo /DWIN32 /D_WINDOWS /utf-8 /MP   /D _CRT_SECURE_NO_DEPRECATE /D _CRT_NONSTDC_NO_DEPRECATE /D _SCL_SECURE_NO_WARNINGS /Gy /bigobj /Oi  /fp:precise /FS       /MD /O2 /Oi /Gy /DNDEBUG /Z7  
+    C flags (Debug):             /nologo /DWIN32 /D_WINDOWS /utf-8 /MP   /D _CRT_SECURE_NO_DEPRECATE /D _CRT_NONSTDC_NO_DEPRECATE /D _SCL_SECURE_NO_WARNINGS /Gy /bigobj /Oi  /fp:precise /FS     /MDd /Z7 /Ob0 /Od /RTC1  
+    Linker flags (Release):      /machine:x64  /nologo /DEBUG /INCREMENTAL:NO /OPT:REF /OPT:ICF    /debug
+    Linker flags (Debug):        /machine:x64  /nologo    /debug /INCREMENTAL 
+    ccache:                      NO
+    Precompiled headers:         NO
+    Extra dependencies:
+    3rdparty dependencies:
+
+  OpenCV modules:
+    To be built:                 calib3d core dnn features2d flann highgui imgcodecs imgproc ml objdetect photo stitching video videoio
+    Disabled:                    world
+    Disabled by dependency:      -
+    Unavailable:                 gapi java python2 python3 ts
+    Applications:                -
+    Documentation:               NO
+    Non-free algorithms:         NO
+
+  Windows RT support:            NO
+
+  GUI:                           WIN32UI
+    Win32 UI:                    YES
+
+  Media I/O: 
+    ZLib:                        optimized C:/Users/deepx/git/dx_demo/yolo_multi_demo/vcpkg_installed/x64-windows/lib/zlib.lib debug C:/Users/deepx/git/dx_demo/yolo_multi_demo/vcpkg_installed/x64-windows/debug/lib/zlibd.lib (ver 1.3.1)
+    JPEG:                        optimized C:/Users/deepx/git/dx_demo/yolo_multi_demo/vcpkg_installed/x64-windows/lib/jpeg.lib debug C:/Users/deepx/git/dx_demo/yolo_multi_demo/vcpkg_installed/x64-windows/debug/lib/jpeg.lib (ver 62)
+    WEBP:                        build (ver 1.5.0)
+    PNG:                         optimized C:/Users/deepx/git/dx_demo/yolo_multi_demo/vcpkg_installed/x64-windows/lib/libpng16.lib debug C:/Users/deepx/git/dx_demo/yolo_multi_demo/vcpkg_installed/x64-windows/debug/lib/libpng16d.lib (ver 1.6.46)
+    TIFF:                        optimized C:/Users/deepx/git/dx_demo/yolo_multi_demo/vcpkg_installed/x64-windows/lib/tiff.lib debug C:/Users/deepx/git/dx_demo/yolo_multi_demo/vcpkg_installed/x64-windows/debug/lib/tiffd.lib (ver 42 / 4.7.0)
+    HDR:                         YES
+    SUNRASTER:                   YES
+    PXM:                         YES
+    PFM:                         YES
+
+  Video I/O:
+    DC1394:                      NO
+    DirectShow:                  YES
+    Media Foundation:            YES
+      DXVA:                      YES
+
+  Parallel framework:            Concurrency
+
+  Trace:                         YES (built-in)
+
+  Other third-party libraries:
+    Custom HAL:                  NO
+    Protobuf:                    optimized C:/Users/deepx/git/dx_demo/yolo_multi_demo/vcpkg_installed/x64-windows/bin/libprotobuf.dll debug C:/Users/deepx/git/dx_demo/yolo_multi_demo/vcpkg_installed/x64-windows/debug/bin/libprotobufd.dll   version (29.3.0)
+
+  OpenCL:                        YES (NVD3D11)
+    Include path:                C:/Users/deepx/git/vcpkg/buildtrees/opencv4/src/4.5.5-f2b5f31c0d.clean/3rdparty/include/opencl/1.2
+    Link libraries:              Dynamic load
+
+  Python (for build):            NO
+
+  Install to:                    C:/Users/deepx/git/vcpkg/packages/opencv4_x64-windows
+-----------------------------------------------------------------
+
+
+================================================================================
+
+[DXPROF] warmup 3000 ms done, measurement started.
+
+================================================================================
+ INTERVAL #1   t = 5.0 s   (5.02 s)
+================================================================================
+stage                   count   calls/s        avg        p50        p90        p99       max*  cpu-ms/s
+--------------------------------------------------------------------------------------------------------
+worker.loop               408      81.3   102.05ms    46.08ms   184.32ms   999.42ms      1.38s    8297.4
+worker.busy               419      83.5    88.41ms    14.08ms   217.09ms   999.42ms      1.37s    7381.9
+worker.get_input          417      83.1      2.1us      1.5us      3.5us     17.5us     91.0us       0.2
+worker.run_async          416      82.9    18.91ms     2.37ms    52.22ms   192.51ms   334.42ms    1567.3
+worker.bbox               418      83.3    453.2us     19.5us     55.0us     9.98ms    75.78ms      37.8
+worker.get_output         413      82.3    57.99ms     3.14ms   143.36ms   999.42ms      1.37s    4772.7
+worker.badge              419      83.5     31.3us     21.5us     26.5us    280.0us     1.69ms       2.6
+worker.frame_swap         419      83.5      0.5us      0.5us      0.5us      1.5us    182.0us       0.0
+worker.sleep_req          419      83.5    12.92ms    15.10ms    27.14ms    28.16ms    29.00ms    1079.1
+worker.sleep_act          417      83.1    23.63ms    26.11ms    46.08ms    71.68ms   114.55ms    1964.0
+post.lock_wait            418      83.3    144.9us      0.5us      0.5us     3.90ms    17.29ms      12.1
+post.yolo                 418      83.3     4.00ms     1.50ms     8.96ms    44.03ms    76.34ms     333.3
+post.gap                  409      81.5    98.80ms    46.08ms   184.32ms      1.08s      1.20s    8053.2
+npu.infer                 419      83.5     6.16ms     6.02ms     7.04ms     8.45ms     9.03ms     514.1
+npu.latency               419      83.5    53.75ms    29.18ms   108.54ms   401.41ms   533.91ms    4488.5
+main.loop                  93      18.5    53.89ms    48.13ms    79.87ms   167.94ms   165.78ms     998.8
+main.busy                  93      18.5    30.71ms    20.99ms    56.32ms   167.94ms   165.77ms     569.1
+main.compose               94      18.7     1.08ms    944.0us     1.76ms     8.96ms     8.74ms      20.2
+main.fps_calc              94      18.7      7.6us      6.5us     10.5us     43.0us     42.0us       0.1
+main.imshow                94      18.7     2.99ms     2.11ms     4.48ms    39.94ms    40.19ms      56.0
+main.waitkey               93      18.5    23.07ms    16.90ms    39.94ms    88.06ms    90.01ms     427.5
+main.winprop               94      18.7     16.7us     13.5us     19.5us    140.0us    138.0us       0.3
+main.sleep_req             93      18.5    10.11ms    12.03ms    17.92ms    19.97ms    20.00ms     187.3
+main.sleep_act             70      13.9    31.43ms    31.23ms    41.98ms    96.26ms    97.02ms     438.4
+  * max 는 프로그램 시작 이후 누적 최대값
+  * cpu-ms/s : 해당 stage 가 초당 소비한 총 시간(모든 채널 합). 30ch x 33ms 이면 1000 근처.
+
+[per-channel avg]
+  ch        loop        busy   get_input   run_async  get_output  frame_swap   sleep_act        yolo         gap       infer     latency     fps
+------------------------------------------------------------------------------------------------------------------------------------------------
+   1    459.88ms    489.89ms       5.7us     11.82ms    444.62ms         0us      2.69ms      2.74ms    421.01ms      5.86ms     99.78ms     1.8
+   2    267.81ms    296.06ms       2.6us      4.95ms    260.64ms       0.3us      2.01ms      3.99ms    273.74ms      6.28ms     30.11ms     3.2
+   3    485.88ms    528.28ms       1.7us     284.9us    482.40ms         0us      2.82ms      7.48ms    490.11ms      6.49ms     36.44ms     1.8
+   4    246.52ms    277.76ms       3.2us      5.81ms    238.60ms       0.1us      1.87ms      2.65ms    237.49ms      5.92ms     28.81ms     3.4
+   5    193.01ms    204.36ms       2.8us      8.21ms    178.88ms       0.1us      5.58ms      1.71ms    191.11ms      6.36ms     49.92ms     4.8
+   6     62.65ms     42.83ms       1.7us     18.66ms     16.70ms       0.1us     26.32ms      4.04ms     63.81ms      6.15ms     54.71ms    14.7
+   7     55.41ms     28.39ms       1.6us     21.88ms      3.95ms       2.1us     28.86ms      3.33ms     55.09ms      6.19ms     49.44ms    17.5
+   8     55.83ms     25.71ms       2.4us     21.93ms      3.38ms       0.1us     30.14ms      4.83ms     53.63ms      6.09ms     64.27ms    17.9
+   9     57.68ms     31.70ms       1.5us     25.23ms      3.07ms       0.0us     29.14ms      4.50ms     58.66ms      6.16ms     54.05ms    16.3
+
+================================================================================
+ INTERVAL #2   t = 10.0 s   (5.01 s)
+================================================================================
+stage                   count   calls/s        avg        p50        p90        p99       max*  cpu-ms/s
+--------------------------------------------------------------------------------------------------------
+worker.loop               508     101.5    85.33ms    48.13ms   159.74ms   671.74ms      1.38s    8659.0
+worker.busy               509     101.7    60.77ms    14.08ms   159.74ms   671.74ms      1.37s    6179.4
+worker.get_input          508     101.5     17.0us      1.5us      4.5us    156.0us     5.56ms       1.7
+worker.run_async          508     101.5    17.48ms     2.37ms    48.13ms   184.32ms   334.42ms    1774.1
+worker.bbox               508     101.5    186.6us     19.5us     45.0us     5.25ms    75.78ms      18.9
+worker.get_output         509     101.7    43.18ms     2.24ms   120.83ms   671.74ms      1.37s    4390.2
+worker.badge              509     101.7     40.9us     21.5us     28.5us    204.0us     6.42ms       4.2
+worker.frame_swap         509     101.7      0.1us      0.5us      0.5us      1.5us    182.0us       0.0
+worker.sleep_req          509     101.7    13.79ms    16.13ms    28.16ms    29.18ms    29.00ms    1402.2
+worker.sleep_act          508     101.5    24.47ms    27.14ms    46.08ms    64.51ms   114.55ms    2483.5
+post.lock_wait            510     101.9     88.8us      0.5us      0.5us      0.5us    37.36ms       9.0
+post.yolo                 510     101.9     2.78ms     1.25ms     6.27ms    20.99ms    76.34ms     282.9
+post.gap                  510     101.9    89.49ms    48.13ms   176.13ms   770.05ms      1.34s    9117.3
+npu.infer                 509     101.7     6.28ms     6.02ms     7.55ms     8.45ms     9.03ms     638.6
+npu.latency               509     101.7    43.66ms    27.14ms    79.87ms   385.02ms   533.91ms    4438.9
+main.loop                 101      20.2    49.35ms    48.13ms    58.37ms    88.06ms   165.78ms     995.8
+main.busy                 102      20.4    25.20ms    17.92ms    44.03ms    83.97ms   165.77ms     513.5
+main.compose              101      20.2     1.07ms     1.01ms     2.02ms     3.39ms     8.74ms      21.6
+main.fps_calc             101      20.2     11.2us      8.5us     12.5us    164.0us    167.0us       0.2
+main.imshow               101      20.2     2.59ms     1.89ms     3.78ms    12.03ms    40.19ms      52.2
+main.waitkey              102      20.4    19.73ms    14.59ms    33.79ms    56.32ms    90.01ms     402.1
+main.winprop              101      20.2     17.5us     13.5us     22.5us     78.0us    262.0us       0.4
+main.sleep_req            102      20.4    11.53ms    15.10ms    17.92ms    18.94ms    20.00ms     234.9
+main.sleep_act             79      15.8    30.76ms    31.23ms    37.89ms    62.46ms    97.02ms     485.4
+  * max 는 프로그램 시작 이후 누적 최대값
+  * cpu-ms/s : 해당 stage 가 초당 소비한 총 시간(모든 채널 합). 30ch x 33ms 이면 1000 근처.
+
+[per-channel avg]
+  ch        loop        busy   get_input   run_async  get_output  frame_swap   sleep_act        yolo         gap       infer     latency     fps
+------------------------------------------------------------------------------------------------------------------------------------------------
+   1    294.18ms    291.85ms       7.6us      4.36ms    289.00ms       0.1us      2.33ms      2.82ms    334.46ms      6.58ms     53.96ms     3.4
+   2    218.90ms    216.70ms     304.1us     10.48ms    206.24ms       0.1us      2.19ms      1.33ms    221.12ms      6.38ms     35.37ms     4.4
+   3    228.43ms    226.37ms       6.4us      5.11ms    222.61ms       0.2us      2.04ms      2.54ms    239.34ms      6.27ms     31.27ms     4.2
+   4    247.77ms    246.36ms       4.8us      3.51ms    242.64ms         0us      1.39ms      2.47ms    279.92ms      6.44ms     33.01ms     3.6
+   5     92.83ms     75.22ms       8.0us     13.50ms     61.80ms       0.1us     17.59ms      1.70ms     94.27ms      6.28ms     39.34ms    10.8
+   6     55.50ms     24.58ms       1.8us     21.90ms      2.50ms       0.1us     30.72ms      2.77ms     55.76ms      6.21ms     45.71ms    18.0
+   7     51.76ms     23.15ms       5.5us     20.47ms      2.35ms       0.1us     28.66ms      2.36ms     52.14ms      6.19ms     46.11ms    19.2
+   8     51.37ms     22.09ms       7.0us     19.22ms      2.50ms       0.1us     29.46ms      3.34ms     51.35ms      6.23ms     42.32ms    19.6
+   9     52.86ms     21.94ms       1.4us     19.65ms      1.97ms       0.1us     30.83ms      3.68ms     51.91ms      6.40ms     47.73ms    18.8
+
+================================================================================
+ INTERVAL #3   t = 15.0 s   (5.02 s)
+================================================================================
+stage                   count   calls/s        avg        p50        p90        p99       max*  cpu-ms/s
+--------------------------------------------------------------------------------------------------------
+worker.loop               667     133.0    68.18ms    46.08ms   124.93ms   540.67ms      1.38s    9067.1
+worker.busy               663     132.2    41.96ms     7.30ms   124.93ms   540.67ms      1.37s    5546.7
+worker.get_input          667     133.0     24.4us      1.5us      2.5us    110.0us    11.57ms       3.2
+worker.run_async          662     132.0    11.11ms    280.0us    31.23ms   135.17ms   334.42ms    1466.0
+worker.bbox               662     132.0     51.8us     18.5us     39.0us    816.0us    75.78ms       6.8
+worker.get_output         663     132.2    30.89ms     1.31ms   108.54ms   516.10ms      1.37s    4083.1
+worker.badge              663     132.2     23.4us     21.5us     25.5us    122.0us     6.42ms       3.1
+worker.frame_swap         663     132.2     10.6us      0.5us      0.5us      1.5us     3.61ms       1.4
+worker.sleep_req          663     132.2    16.48ms    22.02ms    28.16ms    29.18ms    29.00ms    2178.8
+worker.sleep_act          667     133.0    26.37ms    30.21ms    46.08ms    60.42ms   114.55ms    3506.4
+post.lock_wait            660     131.6      5.8us      0.5us      0.5us      0.5us    37.36ms       0.8
+post.yolo                 660     131.6     1.64ms    944.0us     3.65ms     9.98ms    76.34ms     215.9
+post.gap                  660     131.6    65.94ms    46.08ms   129.02ms   450.56ms      1.34s    8676.5
+npu.infer                 663     132.2     6.36ms     6.27ms     7.81ms     8.96ms    13.46ms     841.2
+npu.latency               663     132.2    30.34ms    22.02ms    46.08ms   151.55ms   533.91ms    4010.9
+main.loop                 101      20.1    47.52ms    48.13ms    52.22ms    67.58ms   165.78ms     957.0
+main.busy                 100      19.9    18.69ms    16.90ms    23.04ms    44.03ms   165.77ms     372.5
+main.compose              101      20.1     1.34ms     1.25ms     2.11ms     3.26ms     8.74ms      27.0
+main.fps_calc             101      20.1     10.9us     10.5us     14.5us     29.5us    167.0us       0.2
+main.imshow               100      19.9     2.16ms     1.82ms     3.26ms     5.50ms    40.19ms      43.0
+main.waitkey              100      19.9    14.62ms    13.57ms    17.92ms    33.79ms    90.01ms     291.6
+main.winprop              101      20.1     17.7us     12.5us     19.5us    164.0us    262.0us       0.4
+main.sleep_req            100      19.9    15.01ms    16.13ms    17.92ms    19.97ms    20.00ms     299.3
+main.sleep_act             97      19.3    30.02ms    30.21ms    33.79ms    56.32ms    97.02ms     580.6
+  * max 는 프로그램 시작 이후 누적 최대값
+  * cpu-ms/s : 해당 stage 가 초당 소비한 총 시간(모든 채널 합). 30ch x 33ms 이면 1000 근처.
+
+[per-channel avg]
+  ch        loop        busy   get_input   run_async  get_output  frame_swap   sleep_act        yolo         gap       infer     latency     fps
+------------------------------------------------------------------------------------------------------------------------------------------------
+   1    205.71ms    204.64ms      34.7us      5.44ms    197.93ms         0us      1.06ms      1.26ms    207.25ms      6.53ms     26.23ms     4.4
+   2    126.07ms    122.35ms       2.9us      9.89ms    115.78ms       0.7us      3.71ms      1.78ms    127.76ms      6.45ms     26.23ms     8.2
+   3    178.73ms    177.51ms       3.7us      2.65ms    173.90ms       0.1us      1.21ms      1.89ms    156.91ms      6.46ms     29.02ms     5.4
+   4    161.31ms    159.48ms     376.8us      5.51ms    153.71ms       0.1us      1.83ms      1.62ms    139.15ms      6.56ms     31.12ms     7.0
+   5     45.84ms     13.09ms       3.0us     11.22ms      1.75ms      31.2us     32.75ms      1.82ms     47.19ms      6.34ms     26.99ms    21.1
+   6     46.02ms     13.68ms       1.9us     11.95ms      1.62ms       0.1us     32.39ms      1.47ms     44.85ms      6.23ms     34.86ms    21.3
+   7     48.69ms     16.78ms       1.4us     15.12ms      1.55ms       0.6us     31.90ms      1.53ms     48.76ms      6.44ms     28.60ms    20.3
+   8     44.69ms     12.70ms       8.2us     10.95ms      1.65ms       0.1us     31.75ms      1.59ms     44.51ms      6.38ms     30.27ms    21.9
+   9     45.42ms     13.72ms       1.2us     12.16ms      1.46ms      33.1us     31.80ms      1.76ms     44.93ms      6.26ms     33.38ms    21.9
+
+================================================================================
+ INTERVAL #4   t = 20.1 s   (5.04 s)
+================================================================================
+stage                   count   calls/s        avg        p50        p90        p99       max*  cpu-ms/s
+--------------------------------------------------------------------------------------------------------
+worker.loop               647     128.4    72.46ms    46.08ms   116.74ms   606.21ms      1.38s    9307.1
+worker.busy               649     128.8    53.00ms    20.99ms   116.74ms   606.21ms      1.37s    6828.6
+worker.get_input          647     128.4      2.5us      1.5us      3.5us     45.0us    11.57ms       0.3
+worker.run_async          649     128.8    25.74ms    11.52ms    71.68ms   159.74ms   334.42ms    3316.2
+worker.bbox               649     128.8    104.6us     18.5us     45.0us     2.24ms    75.78ms      13.5
+worker.get_output         649     128.8    26.86ms     3.14ms    41.98ms   606.21ms      1.37s    3460.9
+worker.badge              649     128.8     35.5us     21.5us     27.5us    188.0us     6.42ms       4.6
+worker.frame_swap         649     128.8      9.4us      0.5us      0.5us      1.5us     6.04ms       1.2
+worker.sleep_req          649     128.8    10.87ms     8.06ms    27.14ms    28.16ms    29.00ms    1400.9
+worker.sleep_act          647     128.4    19.30ms    19.97ms    39.94ms    50.18ms   182.70ms    2478.9
+post.lock_wait            651     129.2     11.5us      0.5us      0.5us      0.5us    37.36ms       1.5
+post.yolo                 651     129.2     2.16ms    688.0us     4.99ms    18.94ms   160.77ms     279.0
+post.gap                  651     129.2    73.18ms    44.03ms   129.02ms   606.21ms      1.34s    9457.7
+npu.infer                 649     128.8     6.57ms     6.53ms     7.81ms     8.45ms    13.46ms     845.9
+npu.latency               649     128.8    35.08ms    23.04ms    67.58ms   208.90ms   533.91ms    4519.1
+main.loop                  97      19.3    53.94ms    48.13ms    62.46ms   352.26ms   351.59ms    1038.6
+main.busy                  98      19.5    32.12ms    20.99ms    48.13ms   352.26ms   351.41ms     625.0
+main.compose               97      19.3     1.48ms     1.44ms     2.37ms     5.25ms     8.74ms      28.4
+main.fps_calc              97      19.3     19.5us     12.5us     17.5us    624.0us    627.0us       0.4
+main.imshow                98      19.5     3.52ms     2.11ms     5.76ms    71.68ms    69.79ms      68.4
+main.waitkey               98      19.5    20.30ms    16.13ms    37.89ms    75.78ms    90.01ms     395.0
+main.winprop               97      19.3     32.1us     12.5us     19.5us     1.63ms     1.65ms       0.6
+main.sleep_req             98      19.5    10.48ms    13.06ms    17.92ms    19.97ms    20.00ms     203.9
+main.sleep_act             76      15.1    27.59ms    28.16ms    33.79ms    67.58ms    97.02ms     416.3
+  * max 는 프로그램 시작 이후 누적 최대값
+  * cpu-ms/s : 해당 stage 가 초당 소비한 총 시간(모든 채널 합). 30ch x 33ms 이면 1000 근처.
+
+[per-channel avg]
+  ch        loop        busy   get_input   run_async  get_output  frame_swap   sleep_act        yolo         gap       infer     latency     fps
+------------------------------------------------------------------------------------------------------------------------------------------------
+   1    264.38ms    262.87ms      17.2us     10.75ms    252.23ms         0us      1.51ms      1.61ms    250.96ms      6.69ms     25.58ms     4.4
+   2     70.93ms     50.28ms       3.3us     17.10ms     31.24ms       0.0us     20.02ms      1.58ms     69.30ms      6.49ms     29.63ms    14.5
+   3    172.39ms    164.50ms       1.2us     14.70ms    149.58ms         0us      7.88ms      1.15ms    186.98ms      6.65ms     29.00ms     6.2
+   4     95.63ms     80.15ms       4.3us     15.40ms     64.68ms       0.2us     15.47ms     934.8us    104.37ms      6.72ms     27.52ms    10.5
+   5     55.07ms     33.97ms       1.5us     30.75ms      3.03ms      63.6us     20.79ms      1.82ms     53.51ms      6.52ms     39.06ms    18.7
+   6     54.79ms     34.77ms       1.2us     31.15ms      3.33ms       0.1us     20.01ms      2.17ms     55.82ms      6.56ms     41.17ms    18.7
+   7     53.79ms     33.78ms       2.9us     29.88ms      3.50ms       0.1us     20.00ms      2.31ms     53.45ms      6.54ms     35.27ms    18.9
+   8     54.73ms     33.34ms       1.1us     29.88ms      3.15ms       0.1us     21.34ms      2.20ms     54.78ms      6.57ms     36.98ms    18.7
+   9     53.84ms     29.91ms       1.0us     26.73ms      3.07ms       0.1us     23.92ms      3.88ms     55.06ms      6.55ms     35.72ms    18.9
+
+================================================================================
+ CUMULATIVE SUMMARY (warmup 이후 전체)   (21.20 s)
+================================================================================
+stage                   count   calls/s        avg        p50        p90        p99       max*  cpu-ms/s
+--------------------------------------------------------------------------------------------------------
+worker.loop              2296     108.3    80.99ms    46.08ms   143.36ms   737.28ms      1.38s    8770.5
+worker.busy              2306     108.8    59.59ms    14.59ms   143.36ms   770.05ms      1.37s    6481.4
+worker.get_input         2305     108.7     12.4us      1.5us      3.5us     57.0us    11.57ms       1.3
+worker.run_async         2305     108.7    19.98ms     4.48ms    58.37ms   184.32ms   417.68ms    2172.3
+worker.bbox              2301     108.5    178.9us     18.5us     43.0us     3.78ms    75.78ms      19.4
+worker.get_output        2301     108.5    37.41ms     2.50ms   104.45ms   671.74ms      1.37s    4059.9
+worker.badge             2306     108.8     32.1us     21.5us     26.5us    188.0us     6.42ms       3.5
+worker.frame_swap        2306     108.8      5.8us      0.5us      0.5us      1.5us     6.04ms       0.6
+worker.sleep_req         2306     108.8    13.33ms    15.10ms    28.16ms    29.18ms    29.00ms    1450.4
+worker.sleep_act         2305     108.7    23.29ms    26.11ms    46.08ms    64.51ms   189.23ms    2531.9
+post.lock_wait           2301     108.5     50.9us      0.5us      0.5us      0.5us    37.36ms       5.5
+post.yolo                2301     108.5     2.53ms     1.06ms     5.25ms    24.06ms   160.77ms     275.0
+post.gap                 2292     108.1    80.64ms    48.13ms   151.55ms   737.28ms      1.34s    8717.3
+npu.infer                2306     108.8     6.37ms     6.27ms     7.81ms     8.45ms    13.46ms     692.4
+npu.latency              2306     108.8    39.88ms    25.09ms    71.68ms   352.26ms   533.91ms    4337.3
+main.loop                 402      19.0    51.44ms    48.13ms    60.42ms   143.36ms   351.59ms     975.4
+main.busy                 403      19.0    27.39ms    18.94ms    44.03ms   143.36ms   368.20ms     520.7
+main.compose              403      19.0     1.25ms     1.18ms     2.11ms     4.74ms     8.74ms      23.8
+main.fps_calc             403      19.0     12.3us      9.5us     15.5us     53.0us    627.0us       0.2
+main.imshow               403      19.0     2.79ms     1.95ms     4.22ms     9.98ms    69.79ms      53.1
+main.waitkey              403      19.0    20.27ms    15.10ms    33.79ms    79.87ms   365.59ms     385.3
+main.winprop              404      19.1     21.0us     12.5us     21.5us    164.0us     1.65ms       0.4
+main.sleep_req            403      19.0    11.73ms    15.10ms    17.92ms    18.94ms    20.00ms     223.0
+main.sleep_act            331      15.6    30.34ms    30.21ms    35.84ms    67.58ms   185.57ms     473.7
+  * max 는 프로그램 시작 이후 누적 최대값
+  * cpu-ms/s : 해당 stage 가 초당 소비한 총 시간(모든 채널 합). 30ch x 33ms 이면 1000 근처.
+
+[per-channel avg]
+  ch        loop        busy   get_input   run_async  get_output  frame_swap   sleep_act        yolo         gap       infer     latency     fps
+------------------------------------------------------------------------------------------------------------------------------------------------
+   1    291.09ms    296.70ms      18.4us      8.27ms    281.52ms       0.0us      1.73ms      1.95ms    279.36ms      6.47ms     43.79ms     3.3
+   2    127.21ms    119.57ms      41.8us     16.54ms     98.67ms       0.3us     11.11ms      1.87ms    128.28ms      6.44ms     32.07ms     7.5
+   3    222.41ms    225.81ms       3.5us      9.68ms    206.64ms       0.1us      4.29ms      2.52ms    224.09ms      6.48ms     30.89ms     4.3
+   4    153.93ms    150.09ms     104.5us     13.37ms    131.29ms       0.1us      9.22ms      1.80ms    155.77ms      6.52ms     32.14ms     6.2
+   5     71.39ms     49.26ms       6.5us     19.01ms     28.17ms      32.2us     23.92ms      1.83ms     71.60ms      6.39ms     36.84ms    13.6
+   6     55.17ms     29.17ms       1.6us     21.89ms      5.65ms       0.1us     27.32ms      2.59ms     55.50ms      6.29ms     43.18ms    17.6
+   7     53.55ms     26.84ms       2.8us     23.35ms      2.89ms       0.7us     27.16ms      2.37ms     53.65ms      6.34ms     40.18ms    18.3
+   8     52.44ms     24.49ms       4.8us     21.51ms      2.70ms       0.1us     28.00ms      2.93ms     52.05ms      6.32ms     43.19ms    18.9
+   9     53.53ms     25.54ms       1.3us     22.27ms      2.41ms       9.3us     28.71ms      3.39ms     53.60ms      6.35ms     42.62ms    18.3
+
+#CSV,channel,stage,count,avg_us,min_us,p50_us,p90_us,p99_us,max_us,total_us
+CSV,0,main.loop,402,51441.4,33088,48128.0,60416.0,143360.0,351594,20679423
+CSV,0,main.busy,403,27394.3,13038,18944.0,44032.0,143360.0,368204,11039893
+CSV,0,main.compose,403,1250.6,1,1184.0,2112.0,4736.0,8743,503984
+CSV,0,main.fps_calc,403,12.3,1,9.5,15.5,53.0,627,4977
+CSV,0,main.imshow,403,2791.5,1353,1952.0,4224.0,9984.0,69793,1124955
+CSV,0,main.waitkey,403,20271.1,11340,15104.0,33792.0,79872.0,365586,8169246
+CSV,0,main.winprop,404,21.0,6,12.5,21.5,164.0,1647,8468
+CSV,0,main.sleep_req,403,11729.5,0,15104.0,17920.0,18944.0,20000,4727000
+CSV,0,main.sleep_act,331,30344.2,7023,30208.0,35840.0,67584.0,185573,10043944
+CSV,1,worker.loop,71,291090.6,44063,176128.0,802816.0,1343488.0,1312980,20667435
+CSV,1,worker.busy,72,296695.3,43246,176128.0,802816.0,1277952.0,1294366,21362059
+CSV,1,worker.get_input,72,18.4,0,1.5,21.5,720.0,726,1326
+CSV,1,worker.run_async,72,8273.2,25,90.0,24064.0,92160.0,93789,595669
+CSV,1,worker.bbox,71,29.9,11,16.5,27.5,816.0,819,2121
+CSV,1,worker.get_output,71,281524.8,43149,167936.0,704512.0,1277952.0,1294285,19988259
+CSV,1,worker.badge,72,22.1,14,16.5,22.5,344.0,336,1588
+CSV,1,worker.frame_swap,72,0.0,0,0.5,0.5,1.5,1,1
+CSV,1,worker.sleep_req,72,0.0,0,0.5,0.5,0.5,0,0
+CSV,1,worker.sleep_act,72,1729.6,10,816.0,4480.0,18944.0,18606,124529
+CSV,1,post.lock_wait,71,0.0,0,0.5,0.5,1.5,1,1
+CSV,1,post.yolo,71,1951.0,99,1248.0,4224.0,11520.0,11716,138524
+CSV,1,post.gap,70,279361.1,55317,176128.0,770048.0,1343488.0,1342460,19555274
+CSV,1,npu.infer,72,6474.0,5481,6528.0,7808.0,8960.0,8909,466129
+CSV,1,npu.latency,72,43789.9,8464,20992.0,64512.0,540672.0,533910,3152875
+CSV,2,worker.loop,162,127212.3,29763,75776.0,241664.0,737280.0,1003156,20608388
+CSV,2,worker.busy,163,119573.3,2643,71680.0,270336.0,802816.0,997416,19490449
+CSV,2,worker.get_input,163,41.8,0,1.5,4.5,784.0,5556,6809
+CSV,2,worker.run_async,163,16535.5,21,2880.0,50176.0,151552.0,222641,2695288
+CSV,2,worker.bbox,162,39.8,7,13.5,21.5,528.0,3107,6447
+CSV,2,worker.get_output,162,98669.2,1462,58368.0,225280.0,737280.0,994511,15984412
+CSV,2,worker.badge,163,23.1,15,19.5,25.5,172.0,277,3764
+CSV,2,worker.frame_swap,163,0.3,0,0.5,0.5,5.5,25,41
+CSV,2,worker.sleep_req,163,5662.6,0,0.5,22016.0,27136.0,27000,923000
+CSV,2,worker.sleep_act,163,11105.3,59,3264.0,33792.0,46080.0,48620,1810165
+CSV,2,post.lock_wait,161,0.6,0,0.5,0.5,1.5,100,101
+CSV,2,post.yolo,161,1872.9,58,688.0,4224.0,15104.0,46801,301533
+CSV,2,post.gap,160,128276.0,104,83968.0,233472.0,1032192.0,1103363,20524160
+CSV,2,npu.infer,163,6441.8,5481,6272.0,7808.0,8448.0,8551,1050018
+CSV,2,npu.latency,163,32067.9,9159,23040.0,60416.0,151552.0,344406,5227075
+CSV,3,worker.loop,92,222414.1,29637,135168.0,606208.0,1409024.0,1376833,20462098
+CSV,3,worker.busy,93,225807.1,7833,129024.0,606208.0,1343488.0,1374901,21000063
+CSV,3,worker.get_input,93,3.5,0,1.5,5.5,41.0,41,325
+CSV,3,worker.run_async,93,9683.4,39,140.0,25088.0,208896.0,208658,900552
+CSV,3,worker.bbox,93,32.1,14,25.5,45.0,296.0,289,2989
+CSV,3,worker.get_output,93,206637.9,7264,120832.0,573440.0,1343488.0,1374766,19217322
+CSV,3,worker.badge,93,25.0,17,20.5,28.5,344.0,339,2326
+CSV,3,worker.frame_swap,93,0.1,0,0.5,0.5,2.5,2,7
+CSV,3,worker.sleep_req,93,1236.6,0,0.5,0.5,22016.0,22000,115000
+CSV,3,worker.sleep_act,93,4294.3,7,976.0,9984.0,46080.0,46195,399371
+CSV,3,post.lock_wait,92,0.0,0,0.5,0.5,0.5,0,0
+CSV,3,post.yolo,92,2524.1,111,1008.0,5248.0,60416.0,59467,232213
+CSV,3,post.gap,91,224091.9,8828,129024.0,573440.0,1212416.0,1186727,20392365
+CSV,3,npu.infer,93,6477.3,5482,6272.0,7808.0,8960.0,8995,602386
+CSV,3,npu.latency,93,30891.6,9602,22016.0,48128.0,208896.0,206108,2872918
+CSV,4,worker.loop,133,153931.1,29236,88064.0,241664.0,1081344.0,1174283,20472830
+CSV,4,worker.busy,134,150091.9,5604,88064.0,270336.0,1081344.0,1173625,20112310
+CSV,4,worker.get_input,134,104.5,0,1.5,6.5,1184.0,11567,13998
+CSV,4,worker.run_async,134,13369.3,29,976.0,39936.0,167936.0,174077,1791491
+CSV,4,worker.bbox,133,178.4,1,4.5,7.5,976.0,21777,23721
+CSV,4,worker.get_output,133,131288.4,3180,67584.0,217088.0,1032192.0,1091935,17461362
+CSV,4,worker.badge,134,20.2,15,18.5,24.5,31.5,227,2702
+CSV,4,worker.frame_swap,134,0.1,0,0.5,0.5,1.5,2,12
+CSV,4,worker.sleep_req,134,3619.4,0,0.5,16128.0,24064.0,24000,485000
+CSV,4,worker.sleep_act,134,9220.0,7,2240.0,26112.0,41984.0,189230,1235478
+CSV,4,post.lock_wait,132,0.0,0,0.5,0.5,0.5,0,0
+CSV,4,post.yolo,132,1803.5,28,720.0,4736.0,12032.0,12896,238062
+CSV,4,post.gap,131,155770.1,9535,92160.0,335872.0,1032192.0,1198165,20405883
+CSV,4,npu.infer,134,6518.1,5482,6272.0,7808.0,8448.0,8525,873422
+CSV,4,npu.latency,134,32142.2,8464,22016.0,64512.0,124928.0,344406,4307055
+CSV,5,worker.loop,289,71386.1,29479,46080.0,104448.0,606208.0,769557,20630577
+CSV,5,worker.busy,291,49264.0,835,14080.0,100352.0,606208.0,768833,14335831
+CSV,5,worker.get_input,290,6.5,0,1.5,3.5,156.0,633,1887
+CSV,5,worker.run_async,290,19010.6,16,5760.0,60416.0,192512.0,268662,5513086
+CSV,5,worker.bbox,290,58.8,9,19.5,35.0,1376.0,4834,17060
+CSV,5,worker.get_output,290,28169.4,783,2496.0,56320.0,573440.0,755850,8169124
+CSV,5,worker.badge,291,41.7,17,20.5,28.5,264.0,3271,12123
+CSV,5,worker.frame_swap,291,32.2,0,0.5,0.5,1.5,6041,9363
+CSV,5,worker.sleep_req,291,13285.2,0,15104.0,28160.0,29184.0,29000,3866000
+CSV,5,worker.sleep_act,290,23917.5,23,25088.0,46080.0,60416.0,185439,6936077
+CSV,5,post.lock_wait,290,0.1,0,0.5,0.5,0.5,31,31
+CSV,5,post.yolo,290,1828.1,69,912.0,4224.0,15104.0,19668,530155
+CSV,5,post.gap,289,71600.4,300,44032.0,124928.0,704512.0,746549,20692522
+CSV,5,npu.infer,291,6394.3,5481,6272.0,7552.0,8960.0,9148,1860744
+CSV,5,npu.latency,291,36839.1,8464,24064.0,67584.0,352256.0,533910,10720188
+CSV,6,worker.loop,374,55171.3,29575,46080.0,79872.0,270336.0,550371,20634074
+CSV,6,worker.busy,375,29167.4,867,9472.0,71680.0,303104.0,547293,10937761
+CSV,6,worker.get_input,375,1.6,0,1.5,3.5,11.5,51,614
+CSV,6,worker.run_async,375,21889.7,17,6272.0,67584.0,184320.0,296199,8208627
+CSV,6,worker.bbox,374,240.6,6,14.5,28.5,9984.0,21746,89981
+CSV,6,worker.get_output,374,5650.9,786,2016.0,7040.0,15616.0,515481,2113453
+CSV,6,worker.badge,375,28.2,18,22.5,27.5,74.0,1890,10586
+CSV,6,worker.frame_swap,375,0.1,0,0.5,0.5,2.5,2,32
+CSV,6,worker.sleep_req,375,15984.0,0,19968.0,28160.0,29184.0,29000,5994000
+CSV,6,worker.sleep_act,375,27318.1,11,29184.0,46080.0,64512.0,81482,10244269
+CSV,6,post.lock_wait,375,10.4,0,0.5,0.5,0.5,3883,3884
+CSV,6,post.yolo,375,2594.9,50,1120.0,5504.0,27136.0,44010,973101
+CSV,6,post.gap,374,55505.0,2804,41984.0,104448.0,286720.0,484350,20758853
+CSV,6,npu.infer,375,6294.6,5481,6272.0,7552.0,8448.0,9223,2360491
+CSV,6,npu.latency,375,43177.7,8464,27136.0,75776.0,352256.0,533910,16191640
+CSV,7,worker.loop,388,53546.3,29600,46080.0,79872.0,233472.0,437306,20775946
+CSV,7,worker.busy,389,26844.0,822,9472.0,71680.0,233472.0,427223,10442331
+CSV,7,worker.get_input,389,2.8,0,1.5,3.5,61.0,333,1099
+CSV,7,worker.run_async,389,23352.6,13,6784.0,64512.0,233472.0,417675,9084156
+CSV,7,worker.bbox,389,175.5,2,10.5,23.5,8064.0,9639,68278
+CSV,7,worker.get_output,389,2889.9,715,1760.0,6016.0,18944.0,58131,1124181
+CSV,7,worker.badge,389,25.8,13,16.5,24.5,132.0,1740,10018
+CSV,7,worker.frame_swap,389,0.7,0,0.5,0.5,1.5,182,260
+CSV,7,worker.sleep_req,389,15722.4,0,19968.0,28160.0,29184.0,29000,6116000
+CSV,7,worker.sleep_act,389,27155.3,17,29184.0,46080.0,67584.0,98478,10563398
+CSV,7,post.lock_wait,390,166.7,0,0.5,0.5,3776.0,37364,65021
+CSV,7,post.yolo,390,2369.0,38,1056.0,5248.0,20992.0,32691,923902
+CSV,7,post.gap,389,53646.0,45,44032.0,100352.0,258048.0,445811,20868307
+CSV,7,npu.infer,389,6342.4,5481,6272.0,7552.0,8448.0,13463,2467207
+CSV,7,npu.latency,389,40180.7,8953,26112.0,75776.0,352256.0,447564,15630280
+CSV,8,worker.loop,400,52442.5,29483,44032.0,79872.0,233472.0,383279,20977002
+CSV,8,worker.busy,401,24491.0,1096,7808.0,64512.0,192512.0,376210,9820904
+CSV,8,worker.get_input,401,4.8,0,1.5,2.5,13.5,798,1925
+CSV,8,worker.run_async,401,21512.9,17,4224.0,62464.0,184320.0,367123,8626673
+CSV,8,worker.bbox,401,232.9,23,37.0,74.0,6528.0,15219,93410
+CSV,8,worker.get_output,401,2697.0,984,1888.0,5248.0,9984.0,30612,1081499
+CSV,8,worker.badge,401,30.2,19,22.5,29.5,148.0,1689,12099
+CSV,8,worker.frame_swap,401,0.1,0,0.5,0.5,1.5,10,34
+CSV,8,worker.sleep_req,401,16793.0,0,22016.0,28160.0,28160.0,28000,6734000
+CSV,8,worker.sleep_act,401,27998.3,29,30208.0,46080.0,62464.0,114552,11227330
+CSV,8,post.lock_wait,402,76.6,0,0.5,0.5,752.0,12062,30809
+CSV,8,post.yolo,402,2933.0,122,1184.0,6272.0,26112.0,76339,1179082
+CSV,8,post.gap,401,52054.1,57,39936.0,88064.0,249856.0,412262,20873689
+CSV,8,npu.infer,401,6321.8,5481,6272.0,7552.0,8448.0,8824,2535043
+CSV,8,npu.latency,401,43188.7,8464,28160.0,79872.0,335872.0,533910,17318667
+CSV,9,worker.loop,387,53525.5,29609,46080.0,79872.0,258048.0,396739,20714358
+CSV,9,worker.busy,388,25540.5,920,8448.0,64512.0,270336.0,389226,9909707
+CSV,9,worker.get_input,388,1.3,0,1.5,2.5,6.5,10,496
+CSV,9,worker.run_async,388,22266.0,19,6016.0,60416.0,233472.0,378729,8639198
+CSV,9,worker.bbox,388,277.3,11,21.5,41.0,2752.0,75775,107583
+CSV,9,worker.get_output,388,2410.1,804,1568.0,5248.0,10496.0,12711,935122
+CSV,9,worker.badge,388,48.4,18,21.5,27.5,344.0,6419,18772
+CSV,9,worker.frame_swap,388,9.3,0,0.5,0.5,1.5,3607,3627
+CSV,9,worker.sleep_req,388,16793.8,0,20992.0,28160.0,29184.0,29000,6516000
+CSV,9,worker.sleep_act,388,28708.6,14,30208.0,46080.0,71680.0,182697,11138943
+CSV,9,post.lock_wait,388,44.6,0,0.5,0.5,0.5,17289,17290
+CSV,9,post.yolo,388,3387.5,125,1184.0,7040.0,31232.0,160772,1314331
+CSV,9,post.gap,387,53603.8,262,39936.0,100352.0,286720.0,362163,20744664
+CSV,9,npu.infer,388,6349.0,5481,6272.0,7808.0,8448.0,10293,2463393
+CSV,9,npu.latency,388,42615.4,8464,27136.0,75776.0,385024.0,447564,16534786
+
+[DXPROF] end of log

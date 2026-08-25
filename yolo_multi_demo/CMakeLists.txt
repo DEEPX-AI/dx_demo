@@ -169,6 +169,7 @@ set(DEMO_UTILS_SRC
 
 add_executable(yolo_multi_demo
     ${DEMO_UTILS_SRC}
+    ${CMAKE_SOURCE_DIR}/src/profiler.cpp
     ${CMAKE_SOURCE_DIR}/src/od.cpp
     ${CMAKE_SOURCE_DIR}/src/yolo_multi_channels.cpp
 )
@@ -184,6 +185,9 @@ target_include_directories(yolo_multi_demo PRIVATE
 target_link_libraries(yolo_multi_demo PRIVATE ${DXRT_LIBRARY} ${OpenCV_LIBS})
 if(NOT WIN32)
     target_link_libraries(yolo_multi_demo PRIVATE pthread stdc++fs)
+else()
+    # psapi : GetProcessMemoryInfo (프로파일러의 RSS / page fault 계측)
+    target_link_libraries(yolo_multi_demo PRIVATE psapi)
 endif()
 if(OpenMP_CXX_FOUND)
     target_link_libraries(yolo_multi_demo PRIVATE OpenMP::OpenMP_CXX)

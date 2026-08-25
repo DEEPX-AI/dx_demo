@@ -1,5 +1,6 @@
 #include "od.h"
 #include "yolo.h"
+#include "profiler.h"
 #include <utils/common_util.hpp>
 #include <algorithm>
 
@@ -219,14 +220,25 @@ void ObjectDetection::threadFunc(int period)
     while(1)
     {        
         if(stop) break;
+        // 루프 진입 간격 = 이 채널의 실제 프레임 주기
+        DXPROF_MARK(_channel, dxprof::ST_WORKER_LOOP);
+        dxprof::Stopwatch _pfBusy;
         _proc_start = std::chrono::high_resolution_clock::now();
         _cap_start = std::chrono::high_resolution_clock::now();
-        auto input = _vStream.GetInputStream();
+        void* input = nullptr;
+        {
+            DXPROF_SCOPE(_channel, dxprof::ST_GET_INPUT);
+            input = _vStream.GetInputStream();
+        }
         _fps_time_s = std::chrono::high_resolution_clock::now();
-        std::ignore = _ie->RunAsync(input, (void*)this, (void*)outputMemory);
+        {
+            DXPROF_SCOPE(_channel, dxprof::ST_RUN_ASYNC);
+            std::ignore = _ie->RunAsync(input, (void*)this, (void*)outputMemory);
+        }
         std::vector<BoundingBox> bboxes;
         dxdemo::common::DetectObject bboxes_objects;
         {
+            DXPROF_SCOPE(_channel, dxprof::ST_BBOX_SCALE);
             std::unique_lock<std::mutex> lk(_lock);
             if(!_bboxes.empty() && _toggleDrawing)
             {
@@ -234,7 +246,10 @@ void ObjectDetection::threadFunc(int period)
                 bboxes_objects = GetScalingBBox(bboxes);
             }
         }
-        member_temp = _vStream.GetOutputStream(bboxes_objects);
+        {
+            DXPROF_SCOPE(_channel, dxprof::ST_GET_OUTPUT);
+            member_temp = _vStream.GetOutputStream(bboxes_objects);
+        }
             
 #if 0
         fps += 1000000.0 / _inferTime;
@@ -246,6 +261,7 @@ void ObjectDetection::threadFunc(int period)
         cv::putText(member_temp, caption, cv::Point(56, 21), 0, 0.7, cv::Scalar(255,255,255), 2, cv::LINE_AA);
 #else
         {
+            DXPROF_SCOPE(_channel, dxprof::ST_BADGE);
             const int frameW = member_temp.cols;
             const int frameH = member_temp.rows;
 
@@ -290,6 +306,8 @@ void ObjectDetection::threadFunc(int period)
         
         _inferenceTime = _ie->GetNpuInferenceTime();
         _latencyTime = _ie->GetLatency();
+        DXPROF_ADD(_channel, dxprof::ST_NPU_INFER, _inferenceTime);
+        DXPROF_ADD(_channel, dxprof::ST_NPU_LATENCY, _latencyTime);
         
         int64_t cap_us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - _cap_start).count();
@@ -298,8 +316,10 @@ void ObjectDetection::threadFunc(int period)
         
         if(_processed_count > 0)
         {
+            dxprof::ScopedTimer _pfSwap(_channel, dxprof::ST_FRAME_SWAP);
             std::unique_lock<std::mutex> lk(_frameLock);
             cv::swap(member_temp, _resultFrame);
+            _pfSwap.Stop();   // pause 대기시간은 통계에서 제외
             if(_isPause){
                 _cv.wait(lk, [this]{return !_isPause;});
             }
@@ -307,11 +327,19 @@ void ObjectDetection::threadFunc(int period)
 
         _processTime = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - _proc_start).count();
+
+        // sleep 요청값 vs 실측값.
+        // Windows 기본 타이머 해상도(15.6ms) 때문에 Sleep(1) 이 15ms 이상
+        // 걸리는지 여기서 바로 확인할 수 있다.
+        DXPROF_ADD(_channel, dxprof::ST_WORKER_BUSY, _pfBusy.ElapsedUs());
+        DXPROF_ADD(_channel, dxprof::ST_WORKER_SLEEP_REQ, (uint64_t)t * 1000);
+        dxprof::Stopwatch _pfSleep;
 #ifdef __linux__
         usleep(t*1000);
 #elif _WIN32
         Sleep(t);
 #endif
+        DXPROF_ADD(_channel, dxprof::ST_WORKER_SLEEP_ACT, _pfSleep.ElapsedUs());
     }
     std::cout << _channel << " ended." << std::endl;
 }
@@ -395,8 +423,13 @@ void ObjectDetection::Toggle()
 }
 void ObjectDetection::PostProc(std::vector<std::shared_ptr<dxrt::Tensor>> &outputs)
 {
+    // 콜백 간격 = 이 채널이 실제로 추론 결과를 받는 주기 (= 채널 FPS)
+    DXPROF_MARK(_channel, dxprof::ST_POSTPROC_GAP);
     {
+        dxprof::ScopedTimer _pfWait(_channel, dxprof::ST_POSTPROC_WAIT);
         std::unique_lock<std::mutex> lk(_lock);
+        _pfWait.Stop();
+        DXPROF_SCOPE(_channel, dxprof::ST_POSTPROC);
         _bboxes = yolo.PostProc(outputs);
     }
     _processed_count++;

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <ctime>
 #include <climits>  // INT_MAX, UINT_MAX, LLONG_MAX 등을 위해 추가
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -34,6 +35,7 @@
 #include "display.h"
 
 #include "od.h"
+#include "profiler.h"
 
 #include <rapidjson/document.h>
 #include <rapidjson/prettywriter.h>
@@ -81,6 +83,13 @@ struct AppConfig
     float fps_value_font_scale; // 0.5 = default
     int display_fps; // max FPS for imshow rendering (0 = unlimited)
     int console_fps_period_ms; // periodic FPS log to terminal (0 = disabled)
+
+    // --- stage profiler ("profile" block in json) ---
+    int         profile_enabled;
+    std::string profile_path;
+    int         profile_period_ms;
+    int         profile_warmup_ms;
+    int         profile_per_channel;
 };
 
 // pre/post parameter table
@@ -113,6 +122,10 @@ const char* usage =
 "      --fps_log_period  print FPS to terminal every N ms (0 = off,\n"
 "                      default: 1000 on Windows, 0 on others)\n"
 "                      e.g. yolo_multi -c _multi_od_.json --fps_log_period 500\n"
+"      --profile [path]  write a per-stage timing log (default name if omitted)\n"
+"                      e.g. yolo_multi -c _multi_od_.json --profile win.log\n"
+"      --profile_period  profiler dump interval in ms (default: 5000)\n"
+"      --profile_warmup  ignore the first N ms before measuring (default: 3000)\n"
 "  -h, --help          show help\n"
 ;
 
@@ -289,6 +302,40 @@ int ApplicationJsonParser(std::string configPath, AppConfig* dst)
         {
             DXRT_ASSERT(displayConfig["console_fps_period_ms"].IsInt(), "ERR. console_fps_period_ms must be integer");
             dst->console_fps_period_ms = displayConfig["console_fps_period_ms"].GetInt();
+        }
+
+        // --- stage profiler 설정 ---
+        // "profile": { "enabled": true, "path": "...", "period_ms": 5000,
+        //              "warmup_ms": 3000, "per_channel": true }
+        dst->profile_enabled     = 0;
+        dst->profile_path        = "";
+        dst->profile_period_ms   = 5000;
+        dst->profile_warmup_ms   = 3000;
+        dst->profile_per_channel = 1;
+        if(doc.HasMember("profile") && doc["profile"].IsObject())
+        {
+            const rapidjson::Value& pf = doc["profile"];
+            if(pf.HasMember("enabled"))
+                dst->profile_enabled = pf["enabled"].IsBool() ? (pf["enabled"].GetBool() ? 1 : 0)
+                                                              : pf["enabled"].GetInt();
+            if(pf.HasMember("path"))
+            {
+                DXRT_ASSERT(pf["path"].IsString(), "ERR. profile.path must be string");
+                dst->profile_path = pf["path"].GetString();
+            }
+            if(pf.HasMember("period_ms"))
+            {
+                DXRT_ASSERT(pf["period_ms"].IsInt(), "ERR. profile.period_ms must be integer");
+                dst->profile_period_ms = pf["period_ms"].GetInt();
+            }
+            if(pf.HasMember("warmup_ms"))
+            {
+                DXRT_ASSERT(pf["warmup_ms"].IsInt(), "ERR. profile.warmup_ms must be integer");
+                dst->profile_warmup_ms = pf["warmup_ms"].GetInt();
+            }
+            if(pf.HasMember("per_channel"))
+                dst->profile_per_channel = pf["per_channel"].IsBool() ? (pf["per_channel"].GetBool() ? 1 : 0)
+                                                                      : pf["per_channel"].GetInt();
         }
 
         DXRT_ASSERT(doc.HasMember("video_sources"), "ERR. video_sources argument not placed");
@@ -1234,6 +1281,8 @@ DXRT_TRY_CATCH_BEGIN
     double frameCount = 0.0, window_size = 60.0;
     bool loggingVersion = false;
     int fpsLogPeriodMs = 0; // CLI override for console FPS log period (ms)
+    std::string profilePath = "";
+    int profilePeriodMs = 0, profileWarmupMs = 0;
 
     AppConfig appConfig;
 
@@ -1243,6 +1292,9 @@ DXRT_TRY_CATCH_BEGIN
         ("t, test", "test mode", cxxopts::value<bool>(loggingVersion)->default_value("false"))
         ("window_size", "FPS by average over the last {window_size} seconds (default: 60)", cxxopts::value<double>(window_size)->default_value("60"))
         ("fps_log_period", "print FPS to terminal every N ms (0 = off)", cxxopts::value<int>(fpsLogPeriodMs))
+        ("profile", "write per-stage timing log to this file", cxxopts::value<std::string>(profilePath)->implicit_value(""))
+        ("profile_period", "profiler dump interval in ms", cxxopts::value<int>(profilePeriodMs))
+        ("profile_warmup", "ignore the first N ms before measuring", cxxopts::value<int>(profileWarmupMs))
         ("h, help", "print usage")
     ;
     auto cmd = options.parse(argc, argv);
@@ -1321,6 +1373,8 @@ DXRT_TRY_CATCH_BEGIN
         std::cerr << "[DXDEMO] [ER] The version of the compiled model is not compatible with the version of the runtime. Please compile the model again." << std::endl;
         return -1;
     }
+    // 프로파일러의 preload 메모리 추정에 쓰는 NPU 입력 한 변의 크기
+    const int npuInputSize = (int)ie->GetInputs().front().shape()[1];
     yoloParam = getYoloParameter(appConfig.model_name);
     Yolo yolo = Yolo(yoloParam);
     std::vector<std::shared_ptr<ObjectDetection>> apps;
@@ -1555,6 +1609,139 @@ DXRT_TRY_CATCH_BEGIN
         };
     ie->RegisterCallback(postProcCallBack);
 
+    // ------------------------------------------------------------------
+    // Stage profiler 초기화
+    //   JSON "profile" 블록 또는 --profile CLI 로 활성화.
+    //   CLI 가 JSON 보다 우선한다.
+    // ------------------------------------------------------------------
+    {
+        dxprof::Config pcfg;
+        pcfg.enabled     = (appConfig.profile_enabled != 0);
+        pcfg.path        = appConfig.profile_path;
+        pcfg.period_ms   = appConfig.profile_period_ms;
+        pcfg.warmup_ms   = appConfig.profile_warmup_ms;
+        pcfg.per_channel = (appConfig.profile_per_channel != 0);
+
+        if(cmd.count("profile"))
+        {
+            pcfg.enabled = true;
+            if(!profilePath.empty()) pcfg.path = profilePath;
+        }
+        if(cmd.count("profile_period")) pcfg.period_ms = std::max(200, profilePeriodMs);
+        if(cmd.count("profile_warmup")) pcfg.warmup_ms = std::max(0, profileWarmupMs);
+
+        if(pcfg.enabled && pcfg.path.empty())
+        {
+            // profile_<os>_<Nch>_<timestamp>.log
+            std::time_t nowT = std::time(nullptr);
+            char tb[32] = {0};
+            std::strftime(tb, sizeof(tb), "%Y%m%d_%H%M%S", std::localtime(&nowT));
+#ifdef _WIN32
+            const char* osTag = "win";
+#elif defined(__linux__)
+            const char* osTag = "linux";
+#else
+            const char* osTag = "os";
+#endif
+            pcfg.path = std::string("profile_") + osTag + "_"
+                      + std::to_string(appConfig.video_sources.size()) + "ch_" + tb + ".log";
+        }
+
+        if(pcfg.enabled)
+        {
+            std::ostringstream extra;
+            extra << "--------------------------------------------------------------------------------\n"
+                  << "[demo config]\n"
+                  << "config.path        : " << configPath << "\n"
+                  << "model.path         : " << appConfig.model_path << "\n"
+                  << "model.name         : " << appConfig.model_name << "\n"
+                  << "channels           : " << appConfig.video_sources.size() << "\n"
+                  << "grid               : " << grid_cols << " x " << grid_rows << "\n"
+                  << "cell               : " << divWidth << " x " << divHeight << "\n"
+                  << "board              : " << BOARD_WIDTH << " x " << BOARD_HEIGHT
+                  << " (title " << TITLE_HEIGHT << ")\n"
+                  << "capture_period_ms  : " << appConfig.input_capture_period_ms << "\n"
+                  << "display_fps        : " << appConfig.display_fps << "\n"
+                  << "num_devices        : " << appConfig.num_devices << "\n";
+            extra << "preload_frames     : ";
+            for(size_t i = 0; i < appConfig.pre_saved_frame_count.size(); i++)
+                extra << appConfig.pre_saved_frame_count[i] << " ";
+            extra << "\n";
+#ifdef DXRT_VERSION
+            extra << "dxrt.version       : " << DXRT_VERSION << "\n";
+#endif
+
+            // preload 버퍼가 물리 메모리를 얼마나 쓰는지 추정.
+            // PRELOAD 모드는 원본 해상도 프레임을 그대로 들고 있으므로
+            // 채널 수 x 프레임 수 만큼 곱해져서 커진다.
+            {
+                double srcMB = 0.0, preMB = 0.0;
+                for(size_t i = 0; i < apps.size() && i < appConfig.pre_saved_frame_count.size(); i++)
+                {
+                    int n = appConfig.pre_saved_frame_count[i];
+                    if(n <= 0) continue;   // RUNTIME 모드는 프레임을 쌓지 않는다
+                    auto res = apps[i]->SourceResolution();
+                    srcMB += (double)n * res.first * res.second * 3.0 / (1024.0 * 1024.0);
+                    preMB += (double)n * npuInputSize * npuInputSize * 3.0 / (1024.0 * 1024.0);
+                }
+                extra << "preload.src_mb     : " << std::fixed << std::setprecision(0) << srcMB
+                      << "   (원본 해상도 프레임 버퍼)\n"
+                      << "preload.npu_mb     : " << std::fixed << std::setprecision(0) << preMB
+                      << "   (NPU 입력 프레임 버퍼)\n"
+                      << "preload.total_mb   : " << std::fixed << std::setprecision(0) << (srcMB + preMB)
+                      << "\n";
+            }
+
+            // --- NPU 디바이스 정보 (config 의 num_devices 가 아니라 실측) ---
+            extra << "--------------------------------------------------------------------------------\n"
+                  << "[npu devices]\n";
+            int npuCount = 0;
+            try { npuCount = dxrt::DeviceStatus::GetDeviceCount(); } catch(...) { npuCount = -1; }
+            extra << "npu.count          : " << npuCount
+                  << "   (config num_devices = " << appConfig.num_devices << ")\n";
+            for(int d = 0; d < npuCount; d++)
+            {
+                try
+                {
+                    auto st = dxrt::DeviceStatus::GetCurrentStatus(d);
+                    extra << "npu[" << d << "].board      : " << st.BoardTypeStr() << "\n"
+                          << "npu[" << d << "].variant    : " << st.DeviceVariantStr() << "\n"
+                          << "npu[" << d << "].type       : " << st.DeviceTypeStr() << "\n"
+                          << "npu[" << d << "].memory     : " << st.MemoryTypeStr() << " "
+                                                              << st.MemorySizeStrBinaryPrefix() << "\n"
+                          << "npu[" << d << "].npu_clock  : " << st.NpuClock(0) << "\n"
+                          << "npu[" << d << "].temp_c     : " << st.Temperature(0) << "\n"
+                          << "npu[" << d << "].driver     : " << st.DriverVersionStr() << "\n"
+                          << "npu[" << d << "].pcie       : " << st.PcieInfoStr() << "\n";
+                    std::string info = st.GetInfoString();
+                    if(!info.empty())
+                        extra << "npu[" << d << "].status     :\n" << info << "\n";
+                }
+                catch(...)
+                {
+                    extra << "npu[" << d << "] : <query failed>\n";
+                }
+            }
+
+            // --- config json 원본 전체 ---
+            // 파생값만으로는 원래 설정을 복원할 수 없어서 원문을 그대로 남긴다.
+            {
+                std::ifstream cfgIfs(configPath);
+                if(cfgIfs.is_open())
+                {
+                    std::string cfgTxt((std::istreambuf_iterator<char>(cfgIfs)),
+                                        std::istreambuf_iterator<char>());
+                    extra << "--------------------------------------------------------------------------------\n"
+                          << "[config json: " << configPath << "]\n"
+                          << cfgTxt << "\n";
+                }
+            }
+
+            dxprof::Profiler::Instance().SetChannelCount((int)apps.size());
+            dxprof::Profiler::Instance().Init(pcfg, dxprof::CollectEnvInfo(extra.str()));
+        }
+    }
+
 #if !__riscv
     cv::namedWindow(DISPLAY_WINDOW_NAME, cv::WINDOW_NORMAL);
     if(appConfig.is_fullsize_mode)
@@ -1618,22 +1805,28 @@ DXRT_TRY_CATCH_BEGIN
     while(true)
     {
         auto renderStart = std::chrono::steady_clock::now();
+        DXPROF_MARK(0, dxprof::ST_MAIN_LOOP);       // 렌더 루프 주기
+        dxprof::Stopwatch _pfMainBusy;
         frameCount = 0.1;
         float resultFps = 0.f;
 
-        for(int i = 0; i < (int)apps.size(); i++)
         {
-            uint64_t cnt = apps[i]->GetPostProcessCount();
-            if(cnt != lastRenderCounts[i])
+            DXPROF_SCOPE(0, dxprof::ST_COMPOSE);
+            for(int i = 0; i < (int)apps.size(); i++)
             {
-                cv::Mat roi = outFrame(dstPoint[i]);
-                apps[i]->ResultFrame().copyTo(roi);
-                lastRenderCounts[i] = cnt;
+                uint64_t cnt = apps[i]->GetPostProcessCount();
+                if(cnt != lastRenderCounts[i])
+                {
+                    cv::Mat roi = outFrame(dstPoint[i]);
+                    apps[i]->ResultFrame().copyTo(roi);
+                    lastRenderCounts[i] = cnt;
+                }
             }
         }
 
         allFrameCount++;
 
+        dxprof::Stopwatch _pfFps;
         if(calcFps)
         {
             uint64_t checkSum = 0;  // int에서 uint64_t로 변경하여 오버플로우 방지
@@ -1731,6 +1924,8 @@ DXRT_TRY_CATCH_BEGIN
             }
         }
 
+        DXPROF_ADD(0, dxprof::ST_FPS_CALC, _pfFps.ElapsedUs());
+
         if(console_fps_period_ms > 0)
         {
             auto nowLog = std::chrono::steady_clock::now();
@@ -1756,6 +1951,8 @@ DXRT_TRY_CATCH_BEGIN
 
 #ifndef _WIN32
         // Windows: 헤더 패널이 깨져 표시되므로 그리지 않음 (TITLE_HEIGHT == 0)
+        {
+        DXPROF_SCOPE(0, dxprof::ST_HUD);
         renderHeaderHud(outFrame,
                         BOARD_WIDTH, TITLE_HEIGHT,
                         (int)appConfig.video_sources.size(),
@@ -1765,6 +1962,7 @@ DXRT_TRY_CATCH_BEGIN
                         calcFps,
                         appConfig.model_name,
                         appConfig.fps_value_font_scale);
+        }
 #endif
         sl.frameNumber = std::min(allFrameCount, (uint64_t)UINT_MAX);  // 오버플로우 방지
         sl.runningTime = duration;
@@ -1779,26 +1977,44 @@ DXRT_TRY_CATCH_BEGIN
         std::cout << "press 'q' and enter to exit. " << std::endl;
         int key = getchar();
 #else
-        cv::imshow(DISPLAY_WINDOW_NAME, outFrame);
-        int key = cv::waitKey(1);
+        {
+            DXPROF_SCOPE(0, dxprof::ST_IMSHOW);
+            cv::imshow(DISPLAY_WINDOW_NAME, outFrame);
+        }
+        int key = 0;
+        {
+            DXPROF_SCOPE(0, dxprof::ST_WAITKEY);
+            key = cv::waitKey(1);
+        }
 
         auto renderElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - renderStart).count();
         int sleepMs = display_period_ms - (int)renderElapsed;
+        DXPROF_ADD(0, dxprof::ST_MAIN_BUSY, _pfMainBusy.ElapsedUs());
+        DXPROF_ADD(0, dxprof::ST_MAIN_SLEEP_REQ, (uint64_t)(sleepMs > 0 ? sleepMs : 0) * 1000);
         if(sleepMs > 0)
+        {
+            dxprof::Stopwatch _pfSleep;
             std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+            DXPROF_ADD(0, dxprof::ST_MAIN_SLEEP_ACT, _pfSleep.ElapsedUs());
+        }
 #endif
         bool windowClosed = false;
 #if !__riscv
+        {
+        DXPROF_SCOPE(0, dxprof::ST_WINPROP);
         try {
             windowClosed = (cv::getWindowProperty(DISPLAY_WINDOW_NAME, cv::WND_PROP_VISIBLE) < 1);
         } catch(const cv::Exception&) {
             windowClosed = true;
         }
+        }
 #endif
         if(key == 0x1B || key == 0x71 || g_exitRequested || windowClosed) //'ESC' or 'q' or window 'X'
         {
             sl.threadStatus.store(-1);
+            // 프로파일러를 먼저 닫아 워커 스레드 종료 지연이 통계에 섞이지 않게 한다.
+            dxprof::Profiler::Instance().Shutdown();
             for(auto &app:apps)
             {
                 app->Stop();
@@ -1831,6 +2047,7 @@ DXRT_TRY_CATCH_BEGIN
         }
 
     }
+    dxprof::Profiler::Instance().Shutdown();   // 비정상 경로 대비 (idempotent)
 #ifdef __linux__
     sleep(1);
 #elif _WIN32

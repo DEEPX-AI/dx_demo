@@ -1,0 +1,64 @@
+{
+    "usage": "multi",
+    "model_path": "./assets/models/yolov5-s_640x640_ppu.dxnn",
+    "model_name": "yolov5s_640_ppu",
+    "video_sources": [
+        [
+            "./assets/videos/dron-citry-road.mov",
+            "offline",
+            60
+        ],
+        [
+            "./assets/videos/dance-group.mov",
+            "offline",
+            60
+        ],
+        [
+            "./assets/videos/cctv-city-road2.mov",
+            "offline",
+            60
+        ],
+        [
+            "./assets/videos/dance-solo.mov",
+            "offline",
+            60
+        ],
+        [
+            "./assets/videos/codec_test_clip_h264_16Mbps.mp4",
+            "offline",
+            60
+        ],
+        [
+            "./assets/videos/codec_test_clip_h265_8Mbps.mp4",
+            "offline",
+            60
+        ],
+        [
+            "./assets/videos/blackbox-city-road.mp4",
+            "offline",
+            60
+        ],
+        [
+            "./assets/videos/cctv-city-road.mov",
+            "offline",
+            60
+        ]
+    ],
+    "display_config": {
+        "display_label": "output",
+        "capture_period": 30,
+        "show_fps": true,
+        "fps_value_font_scale": 0.5,
+        "grid_cols": 3,
+        "grid_rows": 3,
+        "sidebar_font_scale": 1
+    },
+    "num_devices": 1,
+    "profile": {
+        "enabled": false,
+        "path": "",
+        "period_ms": 5000,
+        "warmup_ms": 3000,
+        "per_channel": true
+    }
+}
