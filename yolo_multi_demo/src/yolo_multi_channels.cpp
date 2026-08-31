@@ -1814,8 +1814,16 @@ DXRT_TRY_CATCH_BEGIN
                         try
                         {
                             auto st = dxrt::DeviceStatus::GetCurrentStatus(d);
-                            o << " npu[" << d << "] " << st.Temperature(0) << "'C "
-                              << st.NpuClock(0) << "MHz " << st.Voltage(0) << "mV";
+                            // M1 은 디바이스 1개에 NPU 코어가 여러 개다.
+                            // 코어 0 만 보면 다른 코어의 스로틀링을 놓친다.
+                            o << " npu[" << d << "]";
+                            for(int c = 0; c < 3; c++)
+                            {
+                                int t = st.Temperature(c);
+                                if(t <= 0) break;
+                                o << " c" << c << ":" << t << "'C/"
+                                  << st.NpuClock(c) << "MHz/" << st.Voltage(c) << "mV";
+                            }
                         }
                         catch(...) {}
                     }

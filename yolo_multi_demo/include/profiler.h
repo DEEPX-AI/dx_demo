@@ -305,6 +305,7 @@ private:
     std::atomic<bool> _measured{false};   // warmup 을 넘겨 실제 측정에 들어갔는지
     PeriodicSampler _sampler;
     std::mutex      _samplerMutex;
+    double _canaryBase = 0.0;             // CPU 카나리 기준값(us)
     MemSnapshot _memPrev;                 // 구간별 page fault 델타 계산용
     std::chrono::steady_clock::time_point _memPrevT;
     std::chrono::steady_clock::time_point _t0;

@@ -181,6 +181,40 @@ bool ReadMemSnapshot(MemSnapshot& out)
 #endif
 }
 
+// ---------------------------------------------------------------------------
+// CPU 속도 카나리
+//   고정 작업량을 매 구간 같은 방식으로 수행해 CPU 실효 속도 변화를 잡는다.
+//   CPU 가 스로틀링되면 이 값이 커진다. OS 별 클럭 조회 API 없이 이식 가능하고,
+//   L1 에 들어가는 크기라 메모리 대역폭 영향을 받지 않는다.
+//   경합에 의한 노이즈를 줄이려고 여러 번 재서 최소값을 쓴다.
+// ---------------------------------------------------------------------------
+static std::atomic<uint32_t> g_canarySink{0};
+
+static double CpuCanaryUs()
+{
+    static std::vector<uint32_t> buf;
+    if(buf.empty())
+    {
+        buf.resize(4096);
+        for(size_t i = 0; i < buf.size(); i++)
+            buf[i] = (uint32_t)(i * 2654435761u);
+    }
+    double best = 1e18;
+    for(int trial = 0; trial < 5; trial++)
+    {
+        auto s = std::chrono::steady_clock::now();
+        uint32_t acc = 1u;
+        for(int rep = 0; rep < 32; rep++)
+            for(size_t i = 0; i < buf.size(); i++)
+                acc = acc * 1664525u + buf[i] + 1013904223u;
+        double us = std::chrono::duration<double, std::micro>(
+            std::chrono::steady_clock::now() - s).count();
+        g_canarySink.store(acc, std::memory_order_relaxed);   // 최적화 제거 방지
+        if(us < best) best = us;
+    }
+    return best;
+}
+
 // steady_clock 의 실제 분해능 (연속 호출로 값이 바뀌는 최소 간격)
 static double ClockGranularityUs()
 {
@@ -380,6 +414,20 @@ void Profiler::WriteReport(std::ostream& os, const char* title,
         }
     }
 
+    // --- CPU 속도 카나리 ---
+    // 기준값(_canaryBase) 대비 비율. 1.00 이면 기동 시점과 같은 속도.
+    {
+        double us = CpuCanaryUs();
+        if(_canaryBase <= 0.0) _canaryBase = us;
+        os << "[cpu] canary " << std::fixed << std::setprecision(1) << us << "us"
+           << "  (기준 " << std::setprecision(1) << _canaryBase << "us, "
+           << std::setprecision(2) << (us / _canaryBase) << "x)";
+        // 카나리는 데모와 CPU 를 경합하므로 절대값이 아니라 "변화"를 봐야 한다.
+        // 기준값도 동일한 부하 상태에서 잰 것이므로 비율은 의미가 있다.
+        if(us > _canaryBase * 1.20) os << "  <-- CPU 느려짐? (스로틀링 또는 경합)";
+        os << "\n";
+    }
+
     // --- 외부 주입 샘플러 (NPU 온도/클럭 등) ---
     {
         PeriodicSampler fn;
@@ -543,6 +591,7 @@ void Profiler::DumpLoop()
     // 첫 구간부터 fault 델타가 나오도록 기준점을 미리 잡아둔다
     ReadMemSnapshot(_memPrev);
     _memPrevT = _t0;
+    _canaryBase = CpuCanaryUs();
     _measured.store(true);
     Active().store(true, std::memory_order_relaxed);
     _ofs << "[DXPROF] warmup " << _cfg.warmup_ms << " ms done, measurement started.\n";
