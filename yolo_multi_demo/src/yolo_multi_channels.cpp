@@ -44,6 +44,19 @@
 #include <utils/common_util.hpp>
 #include <dxrt/device_info_status.h>
 
+#ifdef _WIN32
+// timeBeginPeriod / timeGetDevCaps.
+// CMakeLists 가 WIN32_LEAN_AND_MEAN 을 정의하므로 <Windows.h> 가
+// <mmsystem.h> 를 끌어오지 않는다. 직접 포함한다.
+// (<Windows.h> 자체는 common_util.hpp 경유로 이미 들어와 있다.)
+#include <timeapi.h>
+// TIMERR_NOERROR 는 SDK 버전에 따라 mmsyscom.h / mmsystem.h 중 어디서
+// 정의되는지가 달라 timeapi.h 만으로 안 잡히는 경우가 있다. 값은 0 으로 고정.
+#ifndef TIMERR_NOERROR
+#define TIMERR_NOERROR 0
+#endif
+#endif
+
 #define DISPLAY_WINDOW_NAME "Object Detection"
 #define EXPAND_WINDOW_NAME "Expand Window"
 #define EXPAND_WINDOW 1
@@ -1265,6 +1278,44 @@ static void renderHeaderHud(cv::Mat& frame,
 }
 
 
+#ifdef _WIN32
+/**
+ * @brief 프로세스 수명 동안 윈도우 타이머 해상도를 올린다.
+ *
+ * 윈도우 기본 타이머 틱은 15.6ms 다. Sleep(t) 와 cv::waitKey(1) 이 모두 이 틱
+ * 경계로 반올림되므로 다음이 통째로 낭비된다.
+ *   - 채널 워커의 프레임 페이싱 : 반복당 약 5.6ms 초과 수면
+ *     (측정값: sleep_req 25.32ms -> sleep_act 30.89ms, p90 은 27.14 -> 44.03ms)
+ *   - 렌더 루프의 waitKey(1)    : 틱 2개 = 약 31ms
+ *
+ * Windows 11 부터 timeBeginPeriod 는 호출한 프로세스에만 적용되므로
+ * 시스템 전역에 영향을 주지 않는다. 소멸자에서 반드시 짝을 맞춘다.
+ */
+class TimerResolution
+{
+public:
+    explicit TimerResolution(UINT desiredMs)
+    {
+        TIMECAPS tc;
+        if(timeGetDevCaps(&tc, sizeof(tc)) != TIMERR_NOERROR)
+            return;
+        UINT want = std::min(std::max(desiredMs, tc.wPeriodMin), tc.wPeriodMax);
+        if(timeBeginPeriod(want) == TIMERR_NOERROR)
+            _period = want;
+    }
+    ~TimerResolution() { if(_period != 0) timeEndPeriod(_period); }
+
+    TimerResolution(const TimerResolution&) = delete;
+    TimerResolution& operator=(const TimerResolution&) = delete;
+
+    /// 실제로 적용된 주기(ms). 0 이면 실패.
+    UINT Period() const { return _period; }
+
+private:
+    UINT _period = 0;
+};
+#endif
+
 int main(int argc, char *argv[])
 {
 DXRT_TRY_CATCH_BEGIN
@@ -1274,6 +1325,16 @@ DXRT_TRY_CATCH_BEGIN
     std::signal(SIGTERM, onExitSignal);
 
 #ifdef _WIN32
+    // 기본 15.6ms 틱 -> 1ms. 자세한 배경은 TimerResolution 주석 참고.
+    // 프로파일러 로그의 sleep(1ms).actual_ms 로 적용 여부를 검증할 수 있다.
+    TimerResolution timerRes(1);
+    if(timerRes.Period() == 0)
+        std::cerr << "[Timer] WARNING: failed to raise timer resolution; "
+                     "Sleep() stays quantized to ~15.6 ms" << std::endl;
+    else
+        std::cout << "[Timer] resolution raised to " << timerRes.Period()
+                  << " ms" << std::endl;
+
     SetProcessPriorityBoost(GetCurrentProcess(), TRUE);
 #endif
 
@@ -1669,6 +1730,11 @@ DXRT_TRY_CATCH_BEGIN
             extra << "\n";
 #ifdef DXRT_VERSION
             extra << "dxrt.version       : " << DXRT_VERSION << "\n";
+#endif
+#ifdef _WIN32
+            extra << "timer.period_ms    : ";
+            if(timerRes.Period() == 0) extra << "(요청 실패, 기본 15.6ms 틱)\n";
+            else                       extra << timerRes.Period() << "\n";
 #endif
 
             // preload 버퍼가 물리 메모리를 얼마나 쓰는지 추정.

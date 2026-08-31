@@ -173,9 +173,15 @@ information, and two probes that often explain a platform gap on their own:
 
 - `clock.granularity_us` — resolution of `steady_clock`
 - `sleep(1ms).actual_ms` — how long a 1 ms sleep really takes. Windows runs a
-  15.6 ms default timer tick unless something has raised it, which makes every
-  `Sleep()` in the pipeline overshoot. Compare this against `sleep_req` vs
-  `sleep_act` in the tables.
+  15.6 ms default timer tick, which makes every `Sleep()` in the pipeline
+  overshoot. Compare this against `sleep_req` vs `sleep_act` in the tables.
+
+On Windows the demo raises the timer resolution to 1 ms for the lifetime of the
+process (`timeBeginPeriod`), so `sleep(1ms).actual_ms` should read around 1 ms
+and `timer.period_ms` in the header should read `1`. If the header instead says
+the request failed, the pipeline is running on the 15.6 ms tick and every
+`Sleep()` and `cv::waitKey(1)` is quantized to it. Since Windows 11 this
+affects only the calling process.
 
 ### Comparing two logs
 
