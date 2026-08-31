@@ -1803,6 +1803,26 @@ DXRT_TRY_CATCH_BEGIN
                 }
             }
 
+            // 구간마다 NPU 온도/클럭을 샘플링한다.
+            // 헤더에만 찍히면 스로틀링 추이를 볼 수 없다.
+            if(npuCount > 0)
+            {
+                dxprof::Profiler::Instance().SetPeriodicSampler([npuCount]() -> std::string {
+                    std::ostringstream o;
+                    for(int d = 0; d < npuCount; d++)
+                    {
+                        try
+                        {
+                            auto st = dxrt::DeviceStatus::GetCurrentStatus(d);
+                            o << " npu[" << d << "] " << st.Temperature(0) << "'C "
+                              << st.NpuClock(0) << "MHz " << st.Voltage(0) << "mV";
+                        }
+                        catch(...) {}
+                    }
+                    return o.str();
+                });
+            }
+
             dxprof::Profiler::Instance().SetChannelCount((int)apps.size());
             dxprof::Profiler::Instance().Init(pcfg, dxprof::CollectEnvInfo(extra.str()));
         }

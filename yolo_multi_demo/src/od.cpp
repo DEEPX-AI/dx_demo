@@ -306,8 +306,20 @@ void ObjectDetection::threadFunc(int period)
         
         _inferenceTime = _ie->GetNpuInferenceTime();
         _latencyTime = _ie->GetLatency();
-        DXPROF_ADD(_channel, dxprof::ST_NPU_INFER, _inferenceTime);
-        DXPROF_ADD(_channel, dxprof::ST_NPU_LATENCY, _latencyTime);
+
+        // dxrt 가 드물게 비정상적인 값을 돌려준다 (1,249초짜리 샘플이 관측됨).
+        // 그대로 넣으면 해당 구간의 평균과 이후 누적 max 가 전부 오염되므로
+        // 걸러내되, 버리지 않고 npu.anomaly 로 따로 세어 눈에 보이게 한다.
+        const uint64_t kNpuTimeSaneUs = 1000000;   // 1초. 정상값은 10ms 안팎.
+        if(_inferenceTime < kNpuTimeSaneUs)
+            DXPROF_ADD(_channel, dxprof::ST_NPU_INFER, _inferenceTime);
+        else
+            DXPROF_ADD(_channel, dxprof::ST_NPU_ANOMALY, _inferenceTime);
+
+        if(_latencyTime < kNpuTimeSaneUs)
+            DXPROF_ADD(_channel, dxprof::ST_NPU_LATENCY, _latencyTime);
+        else
+            DXPROF_ADD(_channel, dxprof::ST_NPU_ANOMALY, _latencyTime);
         
         int64_t cap_us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - _cap_start).count();

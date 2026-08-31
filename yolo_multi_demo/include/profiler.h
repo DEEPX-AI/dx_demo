@@ -22,6 +22,7 @@
 #include <cstring>
 #include <fstream>
 #include <iomanip>
+#include <functional>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -59,6 +60,7 @@ enum Stage : int
     // --- dxrt 리포트 값 ---
     ST_NPU_INFER,         // GetNpuInferenceTime()
     ST_NPU_LATENCY,       // GetLatency()
+    ST_NPU_ANOMALY,       // dxrt 가 돌려준 비정상 값 (기록만 하고 위 통계에서 제외)
 
     // --- 메인 스레드 (렌더/디스플레이 루프) ---
     ST_MAIN_LOOP,         // 루프 1회 전체 (sleep 포함)
@@ -82,7 +84,7 @@ inline const char* StageName(int s)
         "worker.bbox",     "worker.get_output","worker.badge",     "worker.frame_swap",
         "worker.sleep_req","worker.sleep_act",
         "post.lock_wait",  "post.yolo",       "post.gap",
-        "npu.infer",       "npu.latency",
+        "npu.infer",       "npu.latency",     "npu.anomaly",
         "main.loop",       "main.busy",       "main.compose",      "main.fps_calc",
         "main.hud",        "main.imshow",     "main.waitkey",      "main.winprop",
         "main.sleep_req",  "main.sleep_act",
@@ -216,6 +218,10 @@ struct MemSnapshot
 
 bool ReadMemSnapshot(MemSnapshot& out);
 
+/// 구간 리포트마다 호출되어 한 줄을 덧붙이는 훅.
+/// 프로파일러가 dxrt 에 의존하지 않도록 main 에서 주입한다.
+using PeriodicSampler = std::function<std::string()>;
+
 struct Config
 {
     bool        enabled   = false;
@@ -259,6 +265,13 @@ public:
     }
 
     void SetChannelCount(int n) { _numChannels = (n < kMaxChannels) ? n : kMaxChannels - 1; }
+
+    /// 구간 리포트마다 한 줄을 덧붙인다 (NPU 온도/클럭 등). 덤프 스레드에서 호출된다.
+    void SetPeriodicSampler(PeriodicSampler fn)
+    {
+        std::lock_guard<std::mutex> lk(_samplerMutex);
+        _sampler = std::move(fn);
+    }
     bool Enabled() const { return _cfg.enabled; }
     const std::string& Path() const { return _cfg.path; }
 
@@ -290,6 +303,8 @@ private:
     std::condition_variable _cv;
     std::atomic<bool> _running{false};
     std::atomic<bool> _measured{false};   // warmup 을 넘겨 실제 측정에 들어갔는지
+    PeriodicSampler _sampler;
+    std::mutex      _samplerMutex;
     MemSnapshot _memPrev;                 // 구간별 page fault 델타 계산용
     std::chrono::steady_clock::time_point _memPrevT;
     std::chrono::steady_clock::time_point _t0;

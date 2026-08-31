@@ -380,6 +380,21 @@ void Profiler::WriteReport(std::ostream& os, const char* title,
         }
     }
 
+    // --- 외부 주입 샘플러 (NPU 온도/클럭 등) ---
+    {
+        PeriodicSampler fn;
+        {
+            std::lock_guard<std::mutex> lk(_samplerMutex);
+            fn = _sampler;
+        }
+        if(fn)
+        {
+            std::string line;
+            try { line = fn(); } catch(...) {}
+            if(!line.empty()) os << "[device]" << line << "\n";
+        }
+    }
+
     // --- 전 채널 합산 stage 테이블 ---
     os << Pad("stage", 20, true) << Pad("count", 9) << Pad("calls/s", 10)
        << Pad("avg", 11) << Pad("p50", 11) << Pad("p90", 11) << Pad("p99", 11)
