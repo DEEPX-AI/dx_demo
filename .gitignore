@@ -8,3 +8,7 @@ yolo26_4ch_demo/third_party/
 yolo26_4ch_demo/scripts/.dxstream_env.sh
 yolo_multi_demo/bin/
 yolo_multi_demo/build_x86_64/
+**/vcpkg_installed/
+**/build_windows/
+**/build_x64/
+**/build/

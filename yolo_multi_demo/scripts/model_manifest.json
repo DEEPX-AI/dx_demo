@@ -1,0 +1,7 @@
+[
+  {
+    "name": "yolov5s_640_ppu",
+    "category": "PPU",
+    "dxnn_url": "https://sdk.deepx.ai/modelzoo/dxnn/2_4_0/yolov5-s_640x640_ppu.dxnn"
+  }
+]

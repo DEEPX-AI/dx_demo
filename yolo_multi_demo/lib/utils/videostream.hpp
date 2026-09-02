@@ -524,10 +524,15 @@ public:
     {
         if(_srcSize == _dstSize)
         {
-            dst = src;
+            // clone() is required. cv::Mat assignment shares the data buffer,
+            // so dst = src would let the caller's DrawBox/DrawCaption paint
+            // straight onto the stored frame; PRELOAD reuses _srcImg[], so
+            // boxes would accumulate on it permanently.
+            dst = src.clone();
         }
         else
         {
+            // cv::resize allocates dst, so it shares no buffer with src.
             cv::resize(src, dst, cv::Size(_dstSize._width, _dstSize._height), 0, 0, cv::INTER_LINEAR);
         }
     };

@@ -1,5 +1,6 @@
 #include "od.h"
 #include "yolo.h"
+#include "profiler.h"
 #include <utils/common_util.hpp>
 #include <algorithm>
 
@@ -16,11 +17,9 @@ extern YoloParam yoloParam;
 namespace {
 struct CamMode { int w, h, fps; uint32_t pixfmt; };
 
-// V4L2 로 /dev/videoN 의 지원 모드를 enumerate 하여 CPU 부하가 가장 낮은
-// 모드를 선택한다.
-//   1순위: width≥640, height≥360, fps≥15 (추론에 충분한 최소 화질)
-//   2순위: 면적 작은 순 (USB 대역폭/디코드 비용 ↓)
-//   3순위: YUYV > MJPG (JPEG 디코드 CPU 절약)
+// Picks the cheapest V4L2 mode of /dev/videoN that is still good enough for
+// inference, preferring: >=640x360 at >=15 fps, then smaller area (less USB
+// bandwidth and decode), then YUYV over MJPG (no JPEG decode).
 static bool selectOptimalCameraMode(const std::string& devPath, CamMode& out)
 {
     int fd = ::open(devPath.c_str(), O_RDWR | O_NONBLOCK);
@@ -84,9 +83,9 @@ ObjectDetection::ObjectDetection(std::shared_ptr<dxrt::InferenceEngine> ie, std:
     if(_videoSrc.second == "camera")
         inputType = AppInputType::CAMERA;
     else if(_videoSrc.second == "camera_image")
-        inputType = AppInputType::IMAGE;        // 카메라 강조 UI 테스트용 (이미지)
+        inputType = AppInputType::IMAGE;        // camera-highlight UI test
     else if(_videoSrc.second == "camera_video")
-        inputType = AppInputType::VIDEO;        // 카메라 강조 UI 테스트용 (비디오)
+        inputType = AppInputType::VIDEO;        // camera-highlight UI test
     else if(_videoSrc.second == "image")
         inputType = AppInputType::IMAGE;
     else if(_videoSrc.second == "rtsp")
@@ -158,8 +157,6 @@ ObjectDetection::ObjectDetection(std::shared_ptr<dxrt::InferenceEngine> ie, std:
     }
     data_type = _ie->GetOutputs().front().type();
 
-    _fps_time_s = std::chrono::high_resolution_clock::now();
-    _fps_time_e = std::chrono::high_resolution_clock::now();
 }
 ObjectDetection::ObjectDetection(std::shared_ptr<dxrt::InferenceEngine> ie, int channel, int destWidth, int destHeight, int posX, int posY)
 : _ie(ie), _channel(channel+1), _destWidth(destWidth), _destHeight(destHeight), _posX(posX), _posY(posY)
@@ -208,25 +205,29 @@ dxdemo::common::DetectObject ObjectDetection::GetScalingBBox(std::vector<Boundin
 }
 void ObjectDetection::threadFunc(int period)
 {
-    std::string cap = "cap" + std::to_string(_channel);
-    std::string proc = "proc" + std::to_string(_channel);
-#if 0
-    char caption[100] = {0,};
-    float fps = 0.f; double infCount = 0.0;
-#endif
     std::chrono::high_resolution_clock::time_point _cap_start, _proc_start;
     cv::Mat member_temp;
     while(1)
     {        
         if(stop) break;
+        // Interval between iterations = this channel's real frame period.
+        DXPROF_MARK(_channel, dxprof::ST_WORKER_LOOP);
+        dxprof::Stopwatch _pfBusy;
         _proc_start = std::chrono::high_resolution_clock::now();
         _cap_start = std::chrono::high_resolution_clock::now();
-        auto input = _vStream.GetInputStream();
-        _fps_time_s = std::chrono::high_resolution_clock::now();
-        std::ignore = _ie->RunAsync(input, (void*)this, (void*)outputMemory);
+        void* input = nullptr;
+        {
+            DXPROF_SCOPE(_channel, dxprof::ST_GET_INPUT);
+            input = _vStream.GetInputStream();
+        }
+        {
+            DXPROF_SCOPE(_channel, dxprof::ST_RUN_ASYNC);
+            std::ignore = _ie->RunAsync(input, (void*)this, (void*)outputMemory);
+        }
         std::vector<BoundingBox> bboxes;
         dxdemo::common::DetectObject bboxes_objects;
         {
+            DXPROF_SCOPE(_channel, dxprof::ST_BBOX_SCALE);
             std::unique_lock<std::mutex> lk(_lock);
             if(!_bboxes.empty() && _toggleDrawing)
             {
@@ -234,18 +235,13 @@ void ObjectDetection::threadFunc(int period)
                 bboxes_objects = GetScalingBBox(bboxes);
             }
         }
-        member_temp = _vStream.GetOutputStream(bboxes_objects);
-            
-#if 0
-        fps += 1000000.0 / _inferTime;
-        infCount++;
-        float resultFps = round((fps/infCount) * 100) / 100;
-        
-        snprintf(caption, sizeof(caption), " / %.2f FPS", _channel, resultFps);
-        cv::rectangle(member_temp, cv::Point(0, 0), cv::Point(230, 34), cv::Scalar(0, 0, 0), cv::FILLED);
-        cv::putText(member_temp, caption, cv::Point(56, 21), 0, 0.7, cv::Scalar(255,255,255), 2, cv::LINE_AA);
-#else
         {
+            DXPROF_SCOPE(_channel, dxprof::ST_GET_OUTPUT);
+            member_temp = _vStream.GetOutputStream(bboxes_objects);
+        }
+            
+        {
+            DXPROF_SCOPE(_channel, dxprof::ST_BADGE);
             const int frameW = member_temp.cols;
             const int frameH = member_temp.rows;
 
@@ -269,17 +265,12 @@ void ObjectDetection::threadFunc(int period)
             {
                 cv::Rect badgeRect(margin, margin, badgeW, badgeH);
 
-                // 반투명 어두운 배경 (가독성)
-                cv::Mat badgeRoi = member_temp(badgeRect);
-                cv::Mat overlay(badgeRoi.size(), badgeRoi.type(), cv::Scalar(0, 0, 0));
-                cv::addWeighted(overlay, 0.55, badgeRoi, 0.45, 0.0, badgeRoi);
+                cv::rectangle(member_temp, badgeRect, cv::Scalar(0, 0, 0), cv::FILLED);
 
-                // 좌측 액센트 바 (빨강)
                 cv::rectangle(member_temp,
                               cv::Rect(badgeRect.x, badgeRect.y, accentW, badgeRect.height),
                               cv::Scalar(0, 0, 255), cv::FILLED);
 
-                // 채널 텍스트
                 cv::Point textOrg(badgeRect.x + accentW + padX,
                                   badgeRect.y + (badgeRect.height + textSize.height) / 2 - 1);
                 cv::putText(member_temp, chLabel, textOrg,
@@ -288,11 +279,24 @@ void ObjectDetection::threadFunc(int period)
 
             }
         }
-#endif
 
         
         _inferenceTime = _ie->GetNpuInferenceTime();
         _latencyTime = _ie->GetLatency();
+
+        // dxrt occasionally returns a bogus value (~1,249 s samples observed),
+        // which would poison the interval average and the running max. Route
+        // those to npu.anomaly instead of dropping them, so they stay visible.
+        const uint64_t kNpuTimeSaneUs = 1000000;   // 1 s; normal is ~10 ms
+        if(_inferenceTime < kNpuTimeSaneUs)
+            DXPROF_ADD(_channel, dxprof::ST_NPU_INFER, _inferenceTime);
+        else
+            DXPROF_ADD(_channel, dxprof::ST_NPU_ANOMALY, _inferenceTime);
+
+        if(_latencyTime < kNpuTimeSaneUs)
+            DXPROF_ADD(_channel, dxprof::ST_NPU_LATENCY, _latencyTime);
+        else
+            DXPROF_ADD(_channel, dxprof::ST_NPU_ANOMALY, _latencyTime);
         
         int64_t cap_us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - _cap_start).count();
@@ -301,8 +305,10 @@ void ObjectDetection::threadFunc(int period)
         
         if(_processed_count > 0)
         {
+            dxprof::ScopedTimer _pfSwap(_channel, dxprof::ST_FRAME_SWAP);
             std::unique_lock<std::mutex> lk(_frameLock);
             cv::swap(member_temp, _resultFrame);
+            _pfSwap.Stop();   // keep pause waiting out of the statistics
             if(_isPause){
                 _cv.wait(lk, [this]{return !_isPause;});
             }
@@ -310,11 +316,18 @@ void ObjectDetection::threadFunc(int period)
 
         _processTime = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::high_resolution_clock::now() - _proc_start).count();
+
+        // Requested vs actual sleep, which exposes the Windows 15.6 ms timer
+        // tick making Sleep(1) take 15 ms or more.
+        DXPROF_ADD(_channel, dxprof::ST_WORKER_BUSY, _pfBusy.ElapsedUs());
+        DXPROF_ADD(_channel, dxprof::ST_WORKER_SLEEP_REQ, (uint64_t)t * 1000);
+        dxprof::Stopwatch _pfSleep;
 #ifdef __linux__
         usleep(t*1000);
 #elif _WIN32
         Sleep(t);
 #endif
+        DXPROF_ADD(_channel, dxprof::ST_WORKER_SLEEP_ACT, _pfSleep.ElapsedUs());
     }
     std::cout << _channel << " ended." << std::endl;
 }
@@ -382,7 +395,7 @@ uint64_t ObjectDetection::GetInferenceTime()
 }
 uint64_t ObjectDetection::GetProcessingTime()
 {
-    return _duration_time;
+    return _processTime;
 }
 int ObjectDetection::Channel()
 {
@@ -398,30 +411,29 @@ void ObjectDetection::Toggle()
 }
 void ObjectDetection::PostProc(std::vector<std::shared_ptr<dxrt::Tensor>> &outputs)
 {
-    std::unique_lock<std::mutex> lk(_lock);
-    _bboxes = yolo.PostProc(outputs);
-
+    // Interval between callbacks = the rate this channel actually gets
+    // results, i.e. its FPS.
+    DXPROF_MARK(_channel, dxprof::ST_POSTPROC_GAP);
+    {
+        dxprof::ScopedTimer _pfWait(_channel, dxprof::ST_POSTPROC_WAIT);
+        std::unique_lock<std::mutex> lk(_lock);
+        _pfWait.Stop();
+        DXPROF_SCOPE(_channel, dxprof::ST_POSTPROC);
+        _bboxes = yolo.PostProc(outputs);
+    }
     _processed_count++;
     _ret_processed_count++;
 }
 uint64_t ObjectDetection::GetPostProcessCount()
 {
-    std::unique_lock<std::mutex> lk(_lock);
-    return _ret_processed_count;
-}
-void ObjectDetection::SetZeroPostProcessCount()
-{
-    std::unique_lock<std::mutex> lk(_lock);
-    _ret_processed_count = 0;
+    return _ret_processed_count.load();
 }
 std::ostream& operator<<(std::ostream& os, const ObjectDetection& od)
 {
     os << od._name << ": " << od._channel << ", "
         << od._videoSrc.first << ", " << od._videoSrc.second << ", "
-        << od._channel << ", " << od._targetFps << ", "
-        << od._width << ", " << od._height << ", "
-        << od._destWidth << ", " << od._destHeight << ", "
-        << od._posX << ", " << od._posY << ", "
-        << od._offline << ", " << od._cap.get(cv::CAP_PROP_FPS);
+        << od._width << "x" << od._height << " -> "
+        << od._destWidth << "x" << od._destHeight
+        << " @(" << od._posX << "," << od._posY << ")";
     return os;
 }

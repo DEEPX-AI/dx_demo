@@ -3,7 +3,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <climits>  // INT_MAX, UINT_MAX, LLONG_MAX 등을 위해 추가
+#include <ctime>
+#include <climits>
 #include <sys/types.h>
 #include <sys/stat.h>
 #ifdef __linux
@@ -13,6 +14,8 @@
 
 #include <string.h>
 #include <errno.h>
+#include <csignal>
+#include <atomic>
 #include <cctype>
 #include <iomanip>
 #include <sstream>
@@ -32,6 +35,7 @@
 #include "display.h"
 
 #include "od.h"
+#include "profiler.h"
 
 #include <rapidjson/document.h>
 #include <rapidjson/prettywriter.h>
@@ -40,14 +44,21 @@
 #include <utils/common_util.hpp>
 #include <dxrt/device_info_status.h>
 
+#ifdef _WIN32
+// timeBeginPeriod / timeGetDevCaps. WIN32_LEAN_AND_MEAN keeps <Windows.h>
+// (pulled in via common_util.hpp) from including <mmsystem.h>.
+#include <timeapi.h>
+// Depending on the SDK, TIMERR_NOERROR lives in mmsyscom.h rather than
+// timeapi.h. Its value is 0.
+#ifndef TIMERR_NOERROR
+#define TIMERR_NOERROR 0
+#endif
+#endif
+
 #define DISPLAY_WINDOW_NAME "Object Detection"
-#define EXPAND_WINDOW_NAME "Expand Window"
-#define EXPAND_WINDOW 1
 
-/* Tuning point */
+// Default per-channel frame period when the config omits capture_period.
 #define INPUT_CAPTURE_PERIOD_MS 33
-
-static bool g_full_screan = false;
 
 /**
  * @brief AppConfig Definition
@@ -77,12 +88,21 @@ struct AppConfig
     int num_devices; // for sidebar display
     float sidebar_font_scale; // 1.0 = default, <1.0 smaller, >1.0 larger
     float fps_value_font_scale; // 0.5 = default
+    int display_fps; // max FPS for imshow rendering (0 = unlimited)
+    int console_fps_period_ms; // periodic FPS log to terminal (0 = disabled)
+
+    // Stage profiler; see the "profile" block in the config json.
+    int         profile_enabled;
+    std::string profile_path;
+    int         profile_period_ms;
+    int         profile_warmup_ms;
+    int         profile_per_channel;
 };
 
 // pre/post parameter table
 extern YoloParam yolov5s_320, yolov5s_512, yolov5s_640,
 yolov7_512, yolov7_640, yolov8_640, yolox_s_512, yolov5s_face_640, yolov3_512, yolov4_416,
-yolov9_640, yolov5s_512_ppu, scrfd_face_640_ppu;
+yolov9_640, yolov5s_512_ppu, yolov5s_640_ppu, scrfd_face_640_ppu;
 std::vector<YoloParam> yoloParams = {
     yolov5s_320,
     yolov5s_512,
@@ -96,6 +116,7 @@ std::vector<YoloParam> yoloParams = {
     yolov4_416,
     yolov9_640,
     yolov5s_512_ppu,
+    yolov5s_640_ppu,
     scrfd_face_640_ppu
 };
 
@@ -105,6 +126,13 @@ const char* usage =
 "                      e.g. sudo yolo_multi -c _multi_od_.json -a \n"
 "      --window_size    FPS by average over the last {window_size} seconds (default: 60)\n"
 "                      e.g. sudo yolo_multi -c _multi_od_.json --window_size 60\n"
+"      --fps_log_period  print FPS to terminal every N ms (0 = off,\n"
+"                      default: 1000 on Windows, 0 on others)\n"
+"                      e.g. yolo_multi -c _multi_od_.json --fps_log_period 500\n"
+"      --profile [path]  write a per-stage timing log (default name if omitted)\n"
+"                      e.g. yolo_multi -c _multi_od_.json --profile win.log\n"
+"      --profile_period  profiler dump interval in ms (default: 5000)\n"
+"      --profile_warmup  ignore the first N ms before measuring (default: 3000)\n"
 "  -h, --help          show help\n"
 ;
 
@@ -149,7 +177,6 @@ int ApplicationJsonParser(std::string configPath, AppConfig* dst)
 
         if(!displayConfig.HasMember("output_width"))
         {
-            g_full_screan = true;
 #ifdef __linux__
             std::ifstream graphics_info_file("/sys/class/graphics/fb0/virtual_size");
             if(!graphics_info_file)
@@ -257,10 +284,63 @@ int ApplicationJsonParser(std::string configPath, AppConfig* dst)
         }
 
         dst->fps_value_font_scale = 0.5f;
+
+        dst->display_fps = 30;
+        if(displayConfig.HasMember("display_fps"))
+        {
+            DXRT_ASSERT(displayConfig["display_fps"].IsInt(), "ERR. display_fps must be integer");
+            dst->display_fps = displayConfig["display_fps"].GetInt();
+        }
         if(displayConfig.HasMember("fps_value_font_scale"))
         {
             DXRT_ASSERT(displayConfig["fps_value_font_scale"].IsNumber(), "ERR. fps_value_font_scale must be number");
             dst->fps_value_font_scale = (float)displayConfig["fps_value_font_scale"].GetDouble();
+        }
+
+        // Windows draws no header HUD, so the console FPS line is the only
+        // way to read throughput there. Off elsewhere, where the HUD shows it.
+#ifdef _WIN32
+        dst->console_fps_period_ms = 1000;
+#else
+        dst->console_fps_period_ms = 0;
+#endif
+        if(displayConfig.HasMember("console_fps_period_ms"))
+        {
+            DXRT_ASSERT(displayConfig["console_fps_period_ms"].IsInt(), "ERR. console_fps_period_ms must be integer");
+            dst->console_fps_period_ms = displayConfig["console_fps_period_ms"].GetInt();
+        }
+
+        // "profile": { "enabled": true, "path": "...", "period_ms": 5000,
+        //              "warmup_ms": 3000, "per_channel": true }
+        dst->profile_enabled     = 0;
+        dst->profile_path        = "";
+        dst->profile_period_ms   = 5000;
+        dst->profile_warmup_ms   = 3000;
+        dst->profile_per_channel = 1;
+        if(doc.HasMember("profile") && doc["profile"].IsObject())
+        {
+            const rapidjson::Value& pf = doc["profile"];
+            if(pf.HasMember("enabled"))
+                dst->profile_enabled = pf["enabled"].IsBool() ? (pf["enabled"].GetBool() ? 1 : 0)
+                                                              : pf["enabled"].GetInt();
+            if(pf.HasMember("path"))
+            {
+                DXRT_ASSERT(pf["path"].IsString(), "ERR. profile.path must be string");
+                dst->profile_path = pf["path"].GetString();
+            }
+            if(pf.HasMember("period_ms"))
+            {
+                DXRT_ASSERT(pf["period_ms"].IsInt(), "ERR. profile.period_ms must be integer");
+                dst->profile_period_ms = pf["period_ms"].GetInt();
+            }
+            if(pf.HasMember("warmup_ms"))
+            {
+                DXRT_ASSERT(pf["warmup_ms"].IsInt(), "ERR. profile.warmup_ms must be integer");
+                dst->profile_warmup_ms = pf["warmup_ms"].GetInt();
+            }
+            if(pf.HasMember("per_channel"))
+                dst->profile_per_channel = pf["per_channel"].IsBool() ? (pf["per_channel"].GetBool() ? 1 : 0)
+                                                                      : pf["per_channel"].GetInt();
         }
 
         DXRT_ASSERT(doc.HasMember("video_sources"), "ERR. video_sources argument not placed");
@@ -324,76 +404,21 @@ YoloParam getYoloParameter(std::string model_name){
         return yolov9_640;
     else if(model_name == "yolov5s_512_ppu")
         return yolov5s_512_ppu;
+    else if(model_name == "yolov5s_640_ppu")
+        return yolov5s_640_ppu;
     else if(model_name == "scrfd_face_640_ppu")
         return scrfd_face_640_ppu;
     return yolov5s_512;
 }
 YoloParam yoloParam;
 
-// --- CPU 로드 측정 (Linux) ---
-#ifdef __linux
-static float getCpuLoad()
-{
-    static uint64_t lastIdle = 0, lastTotal = 0;
-    std::ifstream stat("/proc/stat");
-    if(!stat.is_open()) return 0.f;
-    std::string cpu;
-    uint64_t user, nice, system, idle, iowait = 0, irq = 0, softirq = 0;
-    stat >> cpu >> user >> nice >> system >> idle >> iowait >> irq >> softirq;
-    uint64_t total = user + nice + system + idle + iowait + irq + softirq;
-    uint64_t deltaIdle  = idle  - lastIdle;
-    uint64_t deltaTotal = total - lastTotal;
-    lastIdle  = idle;
-    lastTotal = total;
-    if(deltaTotal == 0) return 0.f;
-    return (1.0f - (float)deltaIdle / deltaTotal) * 100.f;
-}
-#else
-static float getCpuLoad() { return 0.f; }
-#endif
+static std::atomic<bool> g_exitRequested{false};
 
-// --- NPU average temperature ---
-static float getNpuAvgTemp(int numDevices)
-{
-    if(numDevices <= 0) return 0.f;
-    int sum = 0, count = 0;
-    for(int i = 0; i < numDevices; i++) {
-        try {
-            auto status = dxrt::DeviceStatus::GetCurrentStatus(i);
-            int temp = status.Temperature(0);
-            if(temp > 0) { sum += temp; count++; }
-        } catch(...) {}
-    }
-    return (count > 0) ? (float)sum / count : 0.f;
-}
+static void onExitSignal(int) { g_exitRequested = true; }
 
-// Helper for grid layout (unused after Task 3; may be used in future)
-static int devideBoard(int numImages)
-{
-    return (int)ceil(sqrt(numImages));
-}
-
-// Suppress unused function warnings for CPU/NPU helpers removed by Task 3
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-function"
-#endif
-static void suppressUnusedTaskThreeHelpers() {
-    (void)getCpuLoad;
-    (void)getNpuAvgTemp;
-    (void)devideBoard;
-}
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
-
-// --- EXIT 버튼 마우스 콜백 ---
-static bool g_exitRequested = false;
-
-// --- DEEPX 디바이스 표시명 목록 ---
-// dxrt-cli -s 의 "Device N: <variant>" 정보를 기반으로 사용자 친화적인 이름을 만든다.
-// 예) M.2 보드의 M1 칩 → "DX-M1", H1 보드 → "DX-H1 Quattro"
-//     동일 이름의 디바이스가 여러 개면 "DX-M1 * 3" 형태로 묶어서 반환.
+// Builds display names from the board/variant dxrt reports: an M1 chip on an
+// M.2 board becomes "DX-M1", an H1 board "DX-H1 Quattro". Duplicates collapse
+// into "DX-M1 * 3".
 static std::vector<std::string> getDeepxDeviceNames(int numDevices)
 {
     std::vector<std::string> order;
@@ -413,7 +438,7 @@ static std::vector<std::string> getDeepxDeviceNames(int numDevices)
         if(counts.find(name) == counts.end()) order.push_back(name);
         counts[name]++;
     }
-    // H1 Quattro 보드는 1장 = 4개의 칩으로 카운트되므로 4로 나눈다.
+    // One H1 Quattro board reports as four chips.
     auto it = counts.find("DX-H1 Quattro");
     if(it != counts.end() && it->second >= 4) it->second /= 4;
 
@@ -434,7 +459,7 @@ static void onMouseCallback(int event, int /*x*/, int /*y*/, int /*flags*/, void
     }
 }
 
-// --- HeaderUI: weighted Montserrat font loader ---
+// Montserrat weights, with DejaVu as a fallback.
 enum class HeaderFontWeight { Regular = 0, SemiBold, Bold, ExtraBold, Count };
 
 static std::string fontFileName(HeaderFontWeight weight)
@@ -459,7 +484,6 @@ static std::vector<std::string> fontCandidates(HeaderFontWeight weight)
     candidates.push_back("./sample/fonts/" + fileName);
     candidates.push_back("../sample/fonts/" + fileName);
 
-    // Fallback to system DejaVu fonts
     candidates.push_back("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf");
     candidates.push_back("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
 
@@ -486,7 +510,6 @@ static cv::Ptr<cv::freetype::FreeType2> getHeaderFont(HeaderFontWeight weight)
                 std::cout << "[HeaderUI] Loaded font: " << path << std::endl;
                 break;
             } catch(...) {
-                // Try next candidate
             }
         }
     }
@@ -640,7 +663,6 @@ static bool drawHeaderTextWithFreeType(cv::Mat& img, const std::string& text, cv
 }
 #endif
 
-// --- Header HUD rendering helpers ---
 static void drawRoundedPrimitive(cv::Mat& img, const cv::Rect& rect, int radius, const cv::Scalar& color)
 {
     if(rect.width <= 0 || rect.height <= 0) return;
@@ -648,11 +670,10 @@ static void drawRoundedPrimitive(cv::Mat& img, const cv::Rect& rect, int radius,
     int r = std::min(radius, std::min(rect.width / 2, rect.height / 2));
     int x = rect.x, y = rect.y, w = rect.width, h = rect.height;
 
-    // Rectangles
     cv::rectangle(img, cv::Point(x + r, y), cv::Point(x + w - r, y + h), color, cv::FILLED);
     cv::rectangle(img, cv::Point(x, y + r), cv::Point(x + w, y + h - r), color, cv::FILLED);
 
-    // Circles (corrected off-by-one for right/bottom corners)
+    // Right/bottom corner centers are inset by 1 px.
     cv::circle(img, cv::Point(x + r, y + r), r, color, cv::FILLED);
     cv::circle(img, cv::Point(x + w - r - 1, y + r), r, color, cv::FILLED);
     cv::circle(img, cv::Point(x + r, y + h - r - 1), r, color, cv::FILLED);
@@ -667,7 +688,7 @@ static void drawFilledRoundedRect(cv::Mat& img, const cv::Rect& rect, int radius
     if(alpha >= 0.99) {
         drawRoundedPrimitive(img, clipped, radius, color);
     } else {
-        // Optimize: blend only the clipped ROI
+        // Blend only the clipped ROI.
         cv::Mat roi = img(clipped);
         cv::Mat overlay;
         roi.copyTo(overlay);
@@ -731,7 +752,6 @@ static int fitHeaderFontHeight(const std::string& text, int fontH, int maxWidth,
     return fontH;
 }
 
-// --- Text formatting helpers ---
 static bool isNumericToken(const std::string& token)
 {
     if(token.empty()) return false;
@@ -755,7 +775,6 @@ static std::string formatModelToken(const std::string& token)
     std::string lower = token;
     for(auto& ch : lower) ch = std::tolower((unsigned char)ch);
 
-    // Special formatting for known tokens
     if(lower == "yolov5s") return "YOLOv5S";
     if(lower == "yolov7") return "YOLOv7";
     if(lower == "yolov8") return "YOLOv8";
@@ -767,11 +786,9 @@ static std::string formatModelToken(const std::string& token)
     if(lower == "ppu") return "PPU";
     if(lower == "face") return "Face";
     if(lower.find("yolo") == 0 && lower.size() > 4) {
-        // Generic YOLOvX handling
         return "YOLO" + upperToken(lower.substr(4));
     }
 
-    // Default: uppercase
     return upperToken(token);
 }
 
@@ -937,7 +954,8 @@ static cv::Size drawHeaderLogo(cv::Mat& frame, cv::Point org, int maxW, int maxH
     return logoSize;
 }
 
-// --- Unified Header HUD renderer (cached static layer + per-frame FPS update) ---
+// Header HUD. The static layer is cached and rebuilt only when its inputs
+// change; each frame copies the cache and overwrites the FPS values.
 static void renderHeaderHud(cv::Mat& frame,
                            int boardW, int titleH,
                            int activeStreams, int numDevices,
@@ -948,12 +966,11 @@ static void renderHeaderHud(cv::Mat& frame,
 {
     if(frame.empty() || boardW <= 0 || titleH <= 0) return;
 
-    // --- Static cache for the HUD layer (rebuilt only when parameters change) ---
+    // Invalidated by any input that affects layout or text.
     static cv::Mat s_hudCache;
     static int s_boardW = 0, s_titleH = 0, s_streams = 0, s_devices = 0;
     static std::string s_model;
     static float s_fpsScale = -1.0f;
-    // Cached positions for per-frame FPS value drawing
     static int s_totalValueSlotX = 0, s_avgValueSlotX = 0;
     static int s_totalValueSlotW = 0, s_avgValueSlotW = 0;
     static int s_metricsBaselineY = 0, s_valueFontH = 0;
@@ -969,7 +986,6 @@ static void renderHeaderHud(cv::Mat& frame,
         s_streams = activeStreams; s_devices = numDevices;
         s_model = modelName; s_fpsScale = fpsValueFontScale;
 
-        // Colors (BGR)
         const cv::Scalar COLOR_HUD_BG   (26,  26,  26);
         const cv::Scalar COLOR_DEEPX    (255, 85,  47);
         const cv::Scalar COLOR_TEXT_PRI (245, 245, 245);
@@ -978,7 +994,6 @@ static void renderHeaderHud(cv::Mat& frame,
         const cv::Scalar COLOR_BADGE_BORDER(245, 245, 245);
         const cv::Scalar COLOR_BADGE_DOT   (31,  31, 255);
 
-        // Layout proportions
         int cardH   = titleH;
         int cardTop = 0;
         int marginX = 0;
@@ -997,15 +1012,13 @@ static void renderHeaderHud(cv::Mat& frame,
         int mainX    = marginX;
         int metricsX = marginX + mainW + gap;
 
-        // Draw cards (opaque — no alpha blend needed for cache)
+        // Opaque: no alpha blend needed while filling the cache.
         drawFilledRoundedRect(s_hudCache, cv::Rect(mainX, cardTop, mainW, cardH), mainCardRadius, COLOR_HUD_BG, 1.0);
         drawFilledRoundedRect(s_hudCache, cv::Rect(metricsX, cardTop, metricsW, cardH), mainCardRadius, COLOR_HUD_BG, 1.0);
 
-        // --- Main card content ---
         int contentX = mainX + std::max(20, (int)(mainW * 0.035));
         int contentY = cardTop + cardH / 2;
 
-        // DEEPX logo
         cv::Size logoSize = headerLogoTargetSize(headerDeepxLogo(), mainW / 4, (int)(cardH * 0.45));
         int afterDeepx;
 
@@ -1027,7 +1040,6 @@ static void renderHeaderHud(cv::Mat& frame,
 
         std::string displayModel = formatHeaderModelName(modelName);
 
-        // Title + badge layout
         int badgeH = std::max(20, (int)(cardH * 0.28));
         std::string liveTxt = "LIVE";
         int liveFontH = std::max(12, (int)(badgeH * 0.56));
@@ -1056,7 +1068,6 @@ static void renderHeaderHud(cv::Mat& frame,
         drawHeaderText(s_hudCache, title, cv::Point(titleX, titleY - (titleTextSz.height * 0.16)),
                        titleFontH, HeaderFontWeight::Bold, COLOR_TEXT_PRI);
 
-        // LIVE badge
         int badgeX = titleX + titleTextSz.width + titleBadgeNarrowGap;
         badgeX = std::min(badgeX, separatorX - badgeW);
         badgeX = std::max(afterDeepx, badgeX);
@@ -1085,13 +1096,11 @@ static void renderHeaderHud(cv::Mat& frame,
         drawHeaderText(s_hudCache, liveTxt, cv::Point(liveTextX, liveTextY),
                        liveFontH, HeaderFontWeight::Bold, COLOR_TEXT_PRI);
 
-        // Separator
         int separatorTop = cardTop + std::max(10, (int)(cardH * 0.22));
         int separatorBottom = cardTop + cardH - std::max(10, (int)(cardH * 0.22));
         cv::line(s_hudCache, cv::Point(separatorX, separatorTop),
                  cv::Point(separatorX, separatorBottom), COLOR_TEXT_SEC, 1, cv::LINE_AA);
 
-        // AI Model / Hardware info
         int subAreaX = separatorX + separatorGap;
         int subAreaMaxW = mainX + mainW - rightPad - subAreaX;
         std::string aiModelText = "AI Model: Object Detection (" + displayModel + ")";
@@ -1111,7 +1120,6 @@ static void renderHeaderHud(cv::Mat& frame,
         drawHeaderText(s_hudCache, hardwareText, cv::Point(subAreaX, hardwareY),
                        subFontH, HeaderFontWeight::SemiBold, COLOR_TEXT_SEC);
 
-        // --- Metrics card: labels only (values drawn per-frame) ---
         int mContentX = metricsX + std::max(16, (int)(metricsW * 0.06));
         int mContentW = metricsW - std::max(32, (int)(metricsW * 0.12));
 
@@ -1144,7 +1152,6 @@ static void renderHeaderHud(cv::Mat& frame,
         int metricX = mContentX + std::max(0, (mContentW - metricsGroupW) / 2);
         int metricsBaselineY = cardTop + (cardH + valueFontH) / 2 - std::max(1, (int)(cardH * 0.03));
 
-        // Draw static labels into cache
         drawHeaderText(s_hudCache, "Total FPS", cv::Point(metricX, metricsBaselineY),
                        labelFontH, HeaderFontWeight::Bold, COLOR_TEXT_SEC);
         int totalSlotStartX = metricX + totalLabelSz.width + metricLabelValueGap;
@@ -1153,7 +1160,6 @@ static void renderHeaderHud(cv::Mat& frame,
                        labelFontH, HeaderFontWeight::Bold, COLOR_TEXT_SEC);
         int avgSlotStartX = avgLabelX + avgLabelSz.width + metricLabelValueGap;
 
-        // Save positions for per-frame value rendering
         s_totalValueSlotX = totalSlotStartX;
         s_avgValueSlotX = avgSlotStartX;
         s_totalValueSlotW = totalValueSlotW;
@@ -1162,13 +1168,11 @@ static void renderHeaderHud(cv::Mat& frame,
         s_valueFontH = valueFontH;
     }
 
-    // --- Per-frame: copy cached HUD and draw dynamic FPS values ---
     if(boardW <= frame.cols && titleH <= frame.rows) {
         cv::Mat hudRoi = frame(cv::Rect(0, 0, boardW, titleH));
         s_hudCache.copyTo(hudRoi);
     }
 
-    // Draw FPS values (only dynamic part)
     const cv::Scalar COLOR_FPS(20, 255, 32);
     bool hasFps = showFps && calcFps && activeStreams > 0;
     if(hasFps) {
@@ -1186,12 +1190,70 @@ static void renderHeaderHud(cv::Mat& frame,
 }
 
 
+#ifdef _WIN32
+/**
+ * @brief Raises the Windows timer resolution for the process lifetime.
+ *
+ * The 15.6 ms default tick rounds up every Sleep() and cv::waitKey(1):
+ *   - channel worker pacing overslept ~5.6 ms per iteration
+ *     (sleep_req 25.32 ms -> sleep_act 30.89 ms; p90 27.14 -> 44.03 ms)
+ *   - the render loop's waitKey(1) cost two ticks, ~31 ms
+ *
+ * Since Windows 11 timeBeginPeriod affects only the calling process. The
+ * destructor must pair it with timeEndPeriod.
+ */
+class TimerResolution
+{
+public:
+    explicit TimerResolution(UINT desiredMs)
+    {
+        TIMECAPS tc;
+        if(timeGetDevCaps(&tc, sizeof(tc)) != TIMERR_NOERROR)
+            return;
+        UINT want = std::min(std::max(desiredMs, tc.wPeriodMin), tc.wPeriodMax);
+        if(timeBeginPeriod(want) == TIMERR_NOERROR)
+            _period = want;
+    }
+    ~TimerResolution() { if(_period != 0) timeEndPeriod(_period); }
+
+    TimerResolution(const TimerResolution&) = delete;
+    TimerResolution& operator=(const TimerResolution&) = delete;
+
+    /// Period actually granted, in ms. 0 means the request failed.
+    UINT Period() const { return _period; }
+
+private:
+    UINT _period = 0;
+};
+#endif
+
 int main(int argc, char *argv[])
 {
 DXRT_TRY_CATCH_BEGIN
+    // Ctrl+C / kill -> clean shutdown (needed since a non-activating fullscreen
+    // window has no 'X' button and can't receive ESC/'q' key events).
+    std::signal(SIGINT, onExitSignal);
+    std::signal(SIGTERM, onExitSignal);
+
+#ifdef _WIN32
+    // The profiler log's sleep(1ms).actual_ms confirms whether this took.
+    TimerResolution timerRes(1);
+    if(timerRes.Period() == 0)
+        std::cerr << "[Timer] WARNING: failed to raise timer resolution; "
+                     "Sleep() stays quantized to ~15.6 ms" << std::endl;
+    else
+        std::cout << "[Timer] resolution raised to " << timerRes.Period()
+                  << " ms" << std::endl;
+
+    SetProcessPriorityBoost(GetCurrentProcess(), TRUE);
+#endif
+
     std::string configPath = "";
     double frameCount = 0.0, window_size = 60.0;
     bool loggingVersion = false;
+    int fpsLogPeriodMs = 0; // CLI override for console FPS log period (ms)
+    std::string profilePath = "";
+    int profilePeriodMs = 0, profileWarmupMs = 0;
 
     AppConfig appConfig;
 
@@ -1200,6 +1262,10 @@ DXRT_TRY_CATCH_BEGIN
         ("c, config", "(* required) use config json file for run application", cxxopts::value<std::string>(configPath))
         ("t, test", "test mode", cxxopts::value<bool>(loggingVersion)->default_value("false"))
         ("window_size", "FPS by average over the last {window_size} seconds (default: 60)", cxxopts::value<double>(window_size)->default_value("60"))
+        ("fps_log_period", "print FPS to terminal every N ms (0 = off)", cxxopts::value<int>(fpsLogPeriodMs))
+        ("profile", "write per-stage timing log to this file", cxxopts::value<std::string>(profilePath)->implicit_value(""))
+        ("profile_period", "profiler dump interval in ms", cxxopts::value<int>(profilePeriodMs))
+        ("profile_warmup", "ignore the first N ms before measuring", cxxopts::value<int>(profileWarmupMs))
         ("h, help", "print usage")
     ;
     auto cmd = options.parse(argc, argv);
@@ -1224,15 +1290,24 @@ DXRT_TRY_CATCH_BEGIN
 
     LOG_VALUE(configPath);
 
+    // --fps_log_period overrides the config.
+    if(cmd.count("fps_log_period"))
+        appConfig.console_fps_period_ms = std::max(0, fpsLogPeriodMs);
+
     const int BOARD_WIDTH = appConfig.board_width;
     const int BOARD_HEIGHT = appConfig.board_height;
 
-    // 상단 타이틀 바 높이 (통합 HUD 헤더)
+    // Header HUD height. The panel renders incorrectly on Windows, so it is
+    // dropped there and the grid takes the full height.
+#ifdef _WIN32
+    const int TITLE_HEIGHT = 0;
+#else
     const int HEADER_MIN_HEIGHT = 90;
     const int TITLE_HEIGHT = std::max(HEADER_MIN_HEIGHT, (int)(BOARD_HEIGHT * 0.105));
+#endif
     const int GRID_WIDTH = BOARD_WIDTH;
 
-    // 그리드 크기 결정: JSON에 명시되면 사용, 아니면 자동(sqrt)
+    // Explicit grid from the config, else ceil(sqrt(channels)).
     int grid_cols, grid_rows;
     if(appConfig.grid_cols > 0 && appConfig.grid_rows > 0)
     {
@@ -1251,15 +1326,14 @@ DXRT_TRY_CATCH_BEGIN
         appConfig.is_expand_mode = false;
     }
 
-    // 스트림 셀 간 구분선 두께(px). 각 셀을 GAP만큼 줄이고 GAP/2 만큼 이동시켜
-    // 인접 셀 사이가 회색 배경(아래 outFrame 초기색)으로 노출되도록 함.
-    // 매 프레임 그리지 않으므로 런타임 비용 0.
+    // Separator width between cells. Each cell shrinks by GAP and shifts by
+    // GAP/2, so the board's own background shows through the seams. Nothing is
+    // drawn per frame, so this costs nothing at runtime.
     const int SEPARATOR_GAP = std::max(2, BOARD_HEIGHT / 360);
     const int CELL_OFFSET   = SEPARATOR_GAP / 2;
     const cv::Scalar SEPARATOR_COLOR(0, 0, 0);
 
     cv::Mat outFrame = cv::Mat(cv::Size(BOARD_WIDTH, BOARD_HEIGHT), CV_8UC3, SEPARATOR_COLOR);
-    // 사이드바 영역은 사이드바 자체가 매 프레임 채우므로 그대로 둠.
     auto io = dxrt::InferenceOption();
     io.useORT = false;
     auto ie = std::make_shared<dxrt::InferenceEngine>(appConfig.model_path, io);
@@ -1268,16 +1342,18 @@ DXRT_TRY_CATCH_BEGIN
         std::cerr << "[DXDEMO] [ER] The version of the compiled model is not compatible with the version of the runtime. Please compile the model again." << std::endl;
         return -1;
     }
+    // NPU input edge length, used for the preload memory estimate below.
+    const int npuInputSize = (int)ie->GetInputs().front().shape()[1];
     yoloParam = getYoloParameter(appConfig.model_name);
     Yolo yolo = Yolo(yoloParam);
     std::vector<std::shared_ptr<ObjectDetection>> apps;
-    uint64_t allFrameCount = 0;  // 64비트로 변경하여 오버플로우 방지
+    uint64_t allFrameCount = 0;
     bool calcFps = false;
 
-    // ---- 카메라 강조 레이아웃 (is_expand_mode와 별개) ----
-    // "camera" 입력이 있으면 그 중 첫 번째를 가운데 영역에 확장 배치하고
-    // 노란 테두리 + LIVE 배지를 표시. 모든 카메라 입력에는 노란 테두리/LIVE 적용.
-    const int CAMERA_BORDER       = std::max(4, BOARD_HEIGHT / 240);  // 노란 테두리 두께
+    // Camera highlight layout, independent of is_expand_mode. The first
+    // "camera" source is enlarged near the center; every camera source gets a
+    // yellow border and a LIVE badge.
+    const int CAMERA_BORDER       = std::max(4, BOARD_HEIGHT / 240);  // Yellow border thickness
     const cv::Scalar CAMERA_COLOR(0, 255, 255);                        // BGR Yellow
 
     int cameraExpandIdx = -1;
@@ -1299,16 +1375,16 @@ DXRT_TRY_CATCH_BEGIN
         }
         if(cameraExpandIdx >= 0)
         {
-            // 카메라 셀이 전체 그리드 면적의 20% 를 넘지 않도록 결정
-            //   scale ≤ floor( sqrt(0.20 × cols × rows) )
-            // 예) 5x5→2(16%), 8x8→3(14%), 10x10→4(16%), 16x16→7(19%),
-            //     30x30→13(18%), 100x100→44(19%), 4x4→1(확장 없음)
+            // Cap the camera cell at 20% of the grid area:
+            //   scale <= floor(sqrt(0.20 * cols * rows))
+            // 5x5->2 (16%), 8x8->3 (14%), 10x10->4 (16%), 16x16->7 (19%),
+            // 100x100->44 (19%), 4x4->1 (no enlargement)
             cameraScale = (int)std::floor(std::sqrt(0.20 * (double)grid_cols * grid_rows));
             if(cameraScale < 1) cameraScale = 1;
 
             int totalCells   = grid_cols * grid_rows;
             int othersCount  = (int)appConfig.video_sources.size() - 1;
-            // 다른 스트림이 들어갈 셀이 부족하면 점진적으로 축소
+            // Shrink until the remaining streams still fit.
             while(cameraScale > 1
                   && othersCount + cameraScale * cameraScale > totalCells)
             {
@@ -1405,7 +1481,6 @@ DXRT_TRY_CATCH_BEGIN
         }
     }else
     {
-        // 일반 레이아웃 (카메라 강조 포함)
         auto cellRectFor = [&](int gridIdx, bool isCameraExpanded) {
             int cols = isCameraExpanded ? cameraScale : 1;
             int rows = isCameraExpanded ? cameraScale : 1;
@@ -1419,7 +1494,7 @@ DXRT_TRY_CATCH_BEGIN
             return r;
         };
 
-        // 일반 입력에 사용할 다음 빈 셀 인덱스
+        // Next free cell for a non-camera source.
         int nextCellIdx = 0;
         auto advanceToFreeCell = [&]() {
             while(nextCellIdx < grid_cols * grid_rows
@@ -1448,15 +1523,15 @@ DXRT_TRY_CATCH_BEGIN
                 nextCellIdx++;
             }
 
-            // 카메라 입력은 노란 테두리 폭만큼 안쪽으로 더 inset
+            // Camera cells inset further to leave room for the border.
             int border = isCamera ? CAMERA_BORDER : 0;
             int destW = std::max(1, cell.width  - 2 * border);
             int destH = std::max(1, cell.height - 2 * border);
             int posX  = cell.x + border;
             int posY  = cell.y + border;
 
-            // 노란 테두리: outFrame 위에 셀 영역 전체를 노랑으로 1회 채움
-            // (스트림 ROI는 안쪽에 copy 되므로 가장자리만 노랑이 남음)
+            // Fill the whole cell yellow once; the stream ROI is copied inside
+            // it, so only the border remains visible.
             if(isCamera)
             {
                 cv::rectangle(outFrame, cell, CAMERA_COLOR, cv::FILLED);
@@ -1502,6 +1577,168 @@ DXRT_TRY_CATCH_BEGIN
         };
     ie->RegisterCallback(postProcCallBack);
 
+    // Stage profiler. Enabled by the config "profile" block or --profile,
+    // with the CLI taking precedence.
+    {
+        dxprof::Config pcfg;
+        pcfg.enabled     = (appConfig.profile_enabled != 0);
+        pcfg.path        = appConfig.profile_path;
+        pcfg.period_ms   = appConfig.profile_period_ms;
+        pcfg.warmup_ms   = appConfig.profile_warmup_ms;
+        pcfg.per_channel = (appConfig.profile_per_channel != 0);
+
+        if(cmd.count("profile"))
+        {
+            pcfg.enabled = true;
+            if(!profilePath.empty()) pcfg.path = profilePath;
+        }
+        if(cmd.count("profile_period")) pcfg.period_ms = std::max(200, profilePeriodMs);
+        if(cmd.count("profile_warmup")) pcfg.warmup_ms = std::max(0, profileWarmupMs);
+
+        if(pcfg.enabled && pcfg.path.empty())
+        {
+            // profile_<os>_<Nch>_<timestamp>.log
+            std::time_t nowT = std::time(nullptr);
+            char tb[32] = {0};
+            std::strftime(tb, sizeof(tb), "%Y%m%d_%H%M%S", std::localtime(&nowT));
+#ifdef _WIN32
+            const char* osTag = "win";
+#elif defined(__linux__)
+            const char* osTag = "linux";
+#else
+            const char* osTag = "os";
+#endif
+            pcfg.path = std::string("profile_") + osTag + "_"
+                      + std::to_string(appConfig.video_sources.size()) + "ch_" + tb + ".log";
+        }
+
+        if(pcfg.enabled)
+        {
+            std::ostringstream extra;
+            extra << "--------------------------------------------------------------------------------\n"
+                  << "[demo config]\n"
+                  << "config.path        : " << configPath << "\n"
+                  << "model.path         : " << appConfig.model_path << "\n"
+                  << "model.name         : " << appConfig.model_name << "\n"
+                  << "channels           : " << appConfig.video_sources.size() << "\n"
+                  << "grid               : " << grid_cols << " x " << grid_rows << "\n"
+                  << "cell               : " << divWidth << " x " << divHeight << "\n"
+                  << "board              : " << BOARD_WIDTH << " x " << BOARD_HEIGHT
+                  << " (title " << TITLE_HEIGHT << ")\n"
+                  << "capture_period_ms  : " << appConfig.input_capture_period_ms << "\n"
+                  << "display_fps        : " << appConfig.display_fps << "\n"
+                  << "num_devices        : " << appConfig.num_devices << "\n";
+            extra << "preload_frames     : ";
+            for(size_t i = 0; i < appConfig.pre_saved_frame_count.size(); i++)
+                extra << appConfig.pre_saved_frame_count[i] << " ";
+            extra << "\n";
+#ifdef DXRT_VERSION
+            extra << "dxrt.version       : " << DXRT_VERSION << "\n";
+#endif
+#ifdef _WIN32
+            extra << "timer.period_ms    : ";
+            if(timerRes.Period() == 0) extra << "(request failed; still on the 15.6 ms tick)\n";
+            else                       extra << timerRes.Period() << "\n";
+#endif
+
+            // PRELOAD keeps frames at source resolution, so the footprint
+            // scales with channels x frames and gets large fast.
+            {
+                double srcMB = 0.0, preMB = 0.0;
+                for(size_t i = 0; i < apps.size() && i < appConfig.pre_saved_frame_count.size(); i++)
+                {
+                    int n = appConfig.pre_saved_frame_count[i];
+                    if(n <= 0) continue;   // RUNTIME mode stores no frames
+                    auto res = apps[i]->SourceResolution();
+                    srcMB += (double)n * res.first * res.second * 3.0 / (1024.0 * 1024.0);
+                    preMB += (double)n * npuInputSize * npuInputSize * 3.0 / (1024.0 * 1024.0);
+                }
+                extra << "preload.src_mb     : " << std::fixed << std::setprecision(0) << srcMB
+                      << "   (frames kept at source resolution)\n"
+                      << "preload.npu_mb     : " << std::fixed << std::setprecision(0) << preMB
+                      << "   (frames at NPU input resolution)\n"
+                      << "preload.total_mb   : " << std::fixed << std::setprecision(0) << (srcMB + preMB)
+                      << "\n";
+            }
+
+            // Devices as dxrt reports them, not the config's num_devices.
+            extra << "--------------------------------------------------------------------------------\n"
+                  << "[npu devices]\n";
+            int npuCount = 0;
+            try { npuCount = dxrt::DeviceStatus::GetDeviceCount(); } catch(...) { npuCount = -1; }
+            extra << "npu.count          : " << npuCount
+                  << "   (config num_devices = " << appConfig.num_devices << ")\n";
+            for(int d = 0; d < npuCount; d++)
+            {
+                try
+                {
+                    auto st = dxrt::DeviceStatus::GetCurrentStatus(d);
+                    extra << "npu[" << d << "].board      : " << st.BoardTypeStr() << "\n"
+                          << "npu[" << d << "].variant    : " << st.DeviceVariantStr() << "\n"
+                          << "npu[" << d << "].type       : " << st.DeviceTypeStr() << "\n"
+                          << "npu[" << d << "].memory     : " << st.MemoryTypeStr() << " "
+                                                              << st.MemorySizeStrBinaryPrefix() << "\n"
+                          << "npu[" << d << "].npu_clock  : " << st.NpuClock(0) << "\n"
+                          << "npu[" << d << "].temp_c     : " << st.Temperature(0) << "\n"
+                          << "npu[" << d << "].driver     : " << st.DriverVersionStr() << "\n"
+                          << "npu[" << d << "].pcie       : " << st.PcieInfoStr() << "\n";
+                    std::string info = st.GetInfoString();
+                    if(!info.empty())
+                        extra << "npu[" << d << "].status     :\n" << info << "\n";
+                }
+                catch(...)
+                {
+                    extra << "npu[" << d << "] : <query failed>\n";
+                }
+            }
+
+            // The derived values above cannot reconstruct the original
+            // config, so keep the raw text.
+            {
+                std::ifstream cfgIfs(configPath);
+                if(cfgIfs.is_open())
+                {
+                    std::string cfgTxt((std::istreambuf_iterator<char>(cfgIfs)),
+                                        std::istreambuf_iterator<char>());
+                    extra << "--------------------------------------------------------------------------------\n"
+                          << "[config json: " << configPath << "]\n"
+                          << cfgTxt << "\n";
+                }
+            }
+
+            // Sample per interval; a single reading in the header cannot
+            // show a throttling trend.
+            if(npuCount > 0)
+            {
+                dxprof::Profiler::Instance().SetPeriodicSampler([npuCount]() -> std::string {
+                    std::ostringstream o;
+                    for(int d = 0; d < npuCount; d++)
+                    {
+                        try
+                        {
+                            auto st = dxrt::DeviceStatus::GetCurrentStatus(d);
+                            // An M1 device has several NPU cores; reading
+                            // core 0 alone misses throttling on the others.
+                            o << " npu[" << d << "]";
+                            for(int c = 0; c < 3; c++)
+                            {
+                                int t = st.Temperature(c);
+                                if(t <= 0) break;
+                                o << " c" << c << ":" << t << "'C/"
+                                  << st.NpuClock(c) << "MHz/" << st.Voltage(c) << "mV";
+                            }
+                        }
+                        catch(...) {}
+                    }
+                    return o.str();
+                });
+            }
+
+            dxprof::Profiler::Instance().SetChannelCount((int)apps.size());
+            dxprof::Profiler::Instance().Init(pcfg, dxprof::CollectEnvInfo(extra.str()));
+        }
+    }
+
 #if !__riscv
     cv::namedWindow(DISPLAY_WINDOW_NAME, cv::WINDOW_NORMAL);
     if(appConfig.is_fullsize_mode)
@@ -1521,7 +1758,6 @@ DXRT_TRY_CATCH_BEGIN
         app->Run(appConfig.input_capture_period_ms);
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    /* Debugging */
     std::vector<cv::Rect> dstPoint = std::vector<cv::Rect>(apps.size(), cv::Rect(0, 0, 0, 0));
     for(int i = 0; i < (int)apps.size(); i++)
     {
@@ -1540,52 +1776,75 @@ DXRT_TRY_CATCH_BEGIN
     bool calcStarted = false;
     std::vector<uint64_t> lastProcessedCounts;
 
-    // CPU/NPU 시스템 모니터 표시 토글 ('m' 키). 기본 off.
-    bool showSysStats = false;
+    // display_fps=0 means unlimited; otherwise cap imshow to N fps.
+    const int display_period_ms = (appConfig.display_fps > 0)
+        ? std::max(1, 1000 / appConfig.display_fps)
+        : 1;
+
+    // Periodic FPS line on the terminal (1 s by default on Windows, 0 = off).
+    const int console_fps_period_ms = appConfig.console_fps_period_ms;
+    auto lastFpsLog = std::chrono::steady_clock::now();
+    if(console_fps_period_ms > 0)
+    {
+        std::cout << "[FPS] console log enabled (every " << console_fps_period_ms
+                  << " ms, avg window " << window_size << " s)" << std::endl;
+    }
+
+    // Per-app dirty tracking: only copyTo when the app produced a new frame.
+    std::vector<uint64_t> lastRenderCounts(apps.size(), UINT64_MAX);
 
     while(true)
     {
+        auto renderStart = std::chrono::steady_clock::now();
+        DXPROF_MARK(0, dxprof::ST_MAIN_LOOP);       // Render loop period
+        dxprof::Stopwatch _pfMainBusy;
         frameCount = 0.1;
         float resultFps = 0.f;
 
-        for(int i = 0; i < (int)apps.size(); i++)
         {
-            cv::Mat roi = outFrame(dstPoint[i]);
-            apps[i]->ResultFrame().copyTo(roi);
+            DXPROF_SCOPE(0, dxprof::ST_COMPOSE);
+            for(int i = 0; i < (int)apps.size(); i++)
+            {
+                uint64_t cnt = apps[i]->GetPostProcessCount();
+                if(cnt != lastRenderCounts[i])
+                {
+                    cv::Mat roi = outFrame(dstPoint[i]);
+                    apps[i]->ResultFrame().copyTo(roi);
+                    lastRenderCounts[i] = cnt;
+                }
+            }
         }
 
         allFrameCount++;
 
+        dxprof::Stopwatch _pfFps;
+        // Rolling FPS over window_size seconds: accumulate per-channel deltas
+        // into a timestamped deque and divide by the span it actually covers.
         if(calcFps)
         {
-            uint64_t checkSum = 0;  // int에서 uint64_t로 변경하여 오버플로우 방지
+            uint64_t checkSum = 0;
             for(int i = 0; i < (int)appConfig.video_sources.size(); i++)
             {
                 uint64_t currentCount = apps[i]->GetPostProcessCount();
                 if(calcStarted && i < (int)lastProcessedCounts.size())
                 {
-                    // 이전 측정값과의 차이만 계산 (delta 방식)
                     uint64_t delta = (currentCount > lastProcessedCounts[i]) ?
                                     (currentCount - lastProcessedCounts[i]) : 0;
-                    // 오버플로우 체크 추가
                     if(checkSum > UINT64_MAX - delta) {
                         std::cerr << "Warning: checkSum overflow detected, resetting..." << std::endl;
-                        checkSum = delta;  // 오버플로우 시 현재 delta만 사용
+                        checkSum = delta;  // On overflow, count only the current delta
                     } else {
                         checkSum += delta;
                     }
                 }
-                // 현재 카운트를 저장 (다음 측정을 위해)
                 if(i >= (int)lastProcessedCounts.size())
                     lastProcessedCounts.resize(i + 1);
                 lastProcessedCounts[i] = currentCount;
             }
 
-            // 현재 시간과 함께 프레임 카운트 저장
             auto now = std::chrono::high_resolution_clock::now();
             timestampedCounts.push_back({now, checkSum});
 
-            // window_size 초보다 오래된 데이터 제거 (오버플로우 방지)
             if(window_size > 0 && window_size < LLONG_MAX / 1000) {
                 auto cutoff = now - std::chrono::milliseconds(static_cast<long long>(window_size * 1000));
                 while(!timestampedCounts.empty() && timestampedCounts.front().first < cutoff)
@@ -1605,7 +1864,6 @@ DXRT_TRY_CATCH_BEGIN
             calcStarted = true;
             passTime = 0;
             start = std::chrono::high_resolution_clock::now();
-            // 초기 카운트 값들을 저장
             lastProcessedCounts.resize(appConfig.video_sources.size());
             for(int i = 0; i < (int)appConfig.video_sources.size(); i++)
             {
@@ -1613,7 +1871,6 @@ DXRT_TRY_CATCH_BEGIN
             }
         }
 
-        // 프레임 카운트 집계
         frameCount = 0.0;
         for(const auto& entry : timestampedCounts)
         {
@@ -1626,24 +1883,20 @@ DXRT_TRY_CATCH_BEGIN
             {
                 if(timestampedCounts.size() > 1)
                 {
-                    // 첫 번째와 마지막 타임스탬프 간의 실제 시간 간격 계산
                     auto timeSpan = std::chrono::duration_cast<std::chrono::milliseconds>(
                         timestampedCounts.back().first - timestampedCounts.front().first).count();
 
                     if(timeSpan > 0)
                     {
-                        // 실제 시간 간격 기반으로 FPS 계산
                         resultFps = (frameCount * 1000.0) / timeSpan;
                     }
                     else
                     {
-                        // 시간 간격이 0이면 현재 프레임 카운트만 사용
                         resultFps = frameCount;
                     }
                 }
                 else
                 {
-                    // 단일 샘플인 경우
                     resultFps = frameCount;
                 }
             }
@@ -1653,6 +1906,35 @@ DXRT_TRY_CATCH_BEGIN
             }
         }
 
+        DXPROF_ADD(0, dxprof::ST_FPS_CALC, _pfFps.ElapsedUs());
+
+        if(console_fps_period_ms > 0)
+        {
+            auto nowLog = std::chrono::steady_clock::now();
+            if(std::chrono::duration_cast<std::chrono::milliseconds>(nowLog - lastFpsLog).count()
+                    >= console_fps_period_ms)
+            {
+                lastFpsLog = nowLog;
+                int activeStreams = (int)appConfig.video_sources.size();
+                if(!calcFps)
+                {
+                    std::cout << "[FPS] measuring..." << std::endl;
+                }
+                else
+                {
+                    float avgFps = (activeStreams > 0) ? (resultFps / activeStreams) : 0.f;
+                    std::cout << "[FPS] elapsed " << (duration / 1000) << "s"
+                              << " | Total " << fpsValueText(resultFps)
+                              << " | AVG " << fpsValueText(avgFps)
+                              << " (" << activeStreams << " ch)" << std::endl;
+                }
+            }
+        }
+
+#ifndef _WIN32
+        // Not drawn on Windows, where TITLE_HEIGHT is 0.
+        {
+        DXPROF_SCOPE(0, dxprof::ST_HUD);
         renderHeaderHud(outFrame,
                         BOARD_WIDTH, TITLE_HEIGHT,
                         (int)appConfig.video_sources.size(),
@@ -1662,7 +1944,9 @@ DXRT_TRY_CATCH_BEGIN
                         calcFps,
                         appConfig.model_name,
                         appConfig.fps_value_font_scale);
-        sl.frameNumber = std::min(allFrameCount, (uint64_t)UINT_MAX);  // 오버플로우 방지
+        }
+#endif
+        sl.frameNumber = std::min(allFrameCount, (uint64_t)UINT_MAX);
         sl.runningTime = duration;
         if (loggingVersion)
             sl.threadStatus.store(2);
@@ -1675,18 +1959,61 @@ DXRT_TRY_CATCH_BEGIN
         std::cout << "press 'q' and enter to exit. " << std::endl;
         int key = getchar();
 #else
-        cv::imshow(DISPLAY_WINDOW_NAME, outFrame);
+        {
+            DXPROF_SCOPE(0, dxprof::ST_IMSHOW);
+            cv::imshow(DISPLAY_WINDOW_NAME, outFrame);
+        }
+        int key = 0;
+        {
+            DXPROF_SCOPE(0, dxprof::ST_WAITKEY);
+            key = cv::waitKey(1);
+        }
 
-        int key = cv::waitKey(1);
+        auto renderElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - renderStart).count();
+        int sleepMs = display_period_ms - (int)renderElapsed;
+        DXPROF_ADD(0, dxprof::ST_MAIN_BUSY, _pfMainBusy.ElapsedUs());
+        DXPROF_ADD(0, dxprof::ST_MAIN_SLEEP_REQ, (uint64_t)(sleepMs > 0 ? sleepMs : 0) * 1000);
+        if(sleepMs > 0)
+        {
+            dxprof::Stopwatch _pfSleep;
+            std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+            DXPROF_ADD(0, dxprof::ST_MAIN_SLEEP_ACT, _pfSleep.ElapsedUs());
+        }
 #endif
-        if(key == 0x1B || key == 0x71 || g_exitRequested) //'ESC' or 'q' or EXIT button
+        bool windowClosed = false;
+#if !__riscv
+        {
+        DXPROF_SCOPE(0, dxprof::ST_WINPROP);
+        try {
+            windowClosed = (cv::getWindowProperty(DISPLAY_WINDOW_NAME, cv::WND_PROP_VISIBLE) < 1);
+        } catch(const cv::Exception&) {
+            windowClosed = true;
+        }
+        }
+#endif
+        if(key == 0x1B || key == 0x71 || g_exitRequested || windowClosed) //'ESC' or 'q' or window 'X'
         {
             sl.threadStatus.store(-1);
+            // Close the profiler first so worker shutdown latency stays
+            // out of the statistics.
+            dxprof::Profiler::Instance().Shutdown();
             for(auto &app:apps)
             {
                 app->Stop();
             }
             log_thread.join();
+            if(console_fps_period_ms > 0)
+            {
+                int activeStreams = (int)appConfig.video_sources.size();
+                float avgFps = (activeStreams > 0) ? (resultFps / activeStreams) : 0.f;
+                std::cout << "\n========================================\n"
+                          << " Final FPS Summary\n"
+                          << "   Total FPS : " << fpsValueText(resultFps) << "\n"
+                          << "   AVG FPS   : " << fpsValueText(avgFps)
+                          << "  (over " << activeStreams << " channels)\n"
+                          << "========================================" << std::endl;
+            }
             break;
         }
         else if(key == 0x74) // 't'
@@ -1696,12 +2023,9 @@ DXRT_TRY_CATCH_BEGIN
                 app->Toggle();
             }
         }
-        else if(key == 0x6D) // 'm' : CPU LOAD / NPU TEMP 표시 토글
-        {
-            showSysStats = !showSysStats;
-        }
 
     }
+    dxprof::Profiler::Instance().Shutdown();   // Idempotent; covers abnormal exit paths
 #ifdef __linux__
     sleep(1);
 #elif _WIN32

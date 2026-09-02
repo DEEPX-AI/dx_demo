@@ -36,6 +36,11 @@ EXAMPLE="${DX_DEMO_PATH}/config"
 
 BIN="${DX_DEMO_PATH}/bin/yolo_multi_demo"
 
+# 이 스크립트에 준 인자는 그대로 데모에 전달된다.
+#   예) ./run_demo.sh --profile            -> profile_linux_<N>ch_<시각>.log 생성
+#       ./run_demo.sh --profile my.log --profile_period 2000
+EXTRA_ARGS=("$@")
+
 print_colored "Press ESC or Q to stop the demo." "INFO"
 
 echo "0: Multi-Channel Object Detection (YOLOv5)"
@@ -63,9 +68,9 @@ if [ -z "$select" ]; then
 fi
 
 case $select in
-    0) "$BIN" -c "${EXAMPLE}/yolo_multi_demo.json";;
-    1) "$BIN" -c "${EXAMPLE}/ppu_yolo_multi_demo.json";;
-    2) "$BIN" -c "${EXAMPLE}/ppu_yolo_multi_100channel_demo.json";;
+    0) "$BIN" -c "${EXAMPLE}/yolo_multi_demo.json" "${EXTRA_ARGS[@]}";;
+    1) "$BIN" -c "${EXAMPLE}/ppu_yolo_multi_demo.json" "${EXTRA_ARGS[@]}";;
+    2) "$BIN" -c "${EXAMPLE}/ppu_yolo_multi_100channel_demo.json" "${EXTRA_ARGS[@]}";;
     *) print_colored "Invalid selection: $select" "ERROR"; exit 1;;
 esac
 
