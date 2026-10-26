@@ -44,6 +44,25 @@ If no input is given, the default value `0` is selected.
 > startup (disables the boost process-wide), so the window is a normal focusable
 > window and stays at full speed whether focused or not.
 
+> **Windows note:** unless `display_config.output_width` / `output_height` are
+> set explicitly, the composition buffer is fixed at FHD (1920x1080) instead of
+> matching the monitor resolution. On a 4K display, compositing at the native
+> resolution uses four times as many composition pixels; the actual CPU and
+> temperature impact depends on the workload. The display window is still
+> `WINDOW_NORMAL` (freely resizable /
+> maximizable, and `is_fullsize_mode` still spans the whole monitor); the final
+> upscale to whatever size the window ends up at is done by the OS-level blit
+> in OpenCV's Win32 HighGUI backend, not by this demo's own `cv::resize` calls.
+
+> **Crash fix:** a `"offline"` video source whose decoder fails to produce any
+> frames during preload (e.g. an HEVC/H.265 clip with no decoder available,
+> confirmed on Windows via Media Foundation) used to leave `_srcImg`/`_preImg`
+> shorter than the configured preload count while playback still indexed them
+> at the original length, corrupting memory and eventually crashing inside
+> `VideoStream::ImgPostResize`. The preload step now clamps the usable frame
+> count to what was actually captured. If none were captured, it logs an error,
+> displays `INPUT ERROR`, and disables inference for that channel.
+
 ## Camera Expand Layout
 
 When `video_sources` includes a camera input (one of `"camera"`, `"camera_image"`, `"camera_video"`), the first camera channel is automatically **expanded into the center of the grid** to emphasize it like a main window. The remaining channels are placed in the surrounding cells as usual.
@@ -58,6 +77,54 @@ When `video_sources` includes a camera input (one of `"camera"`, `"camera_image"
 |-----|------|---------|-------------|
 | `sidebar_font_scale` | float | 1.0 | Sidebar font scale |
 | `fps_value_font_scale` | float | 0.5 | Top HUD FPS value font scale |
+| `inference_fps` | integer | 15 | Maximum submissions per second per channel (1-1000); actual rate is also limited by capture and NPU completion. |
+| `benchmark_mode` | boolean | false | Disable preload-result caching and the `inference_fps` cap; repeatedly infer at the `capture_period` cadence, still allowing only one in-flight request per channel. |
+| `capture_period` | integer | 33 | Positive capture/playback period in milliseconds, **not FPS**. Existing configs commonly use 30 ms. |
+| `display_fps` | integer | 30 | Main window refresh cap; independent of inference. Zero means unlimited. |
+
+### Inference and playback
+
+Normal mode continues capture/playback while inference is pending, without
+queuing missed frames. It submits the current input when the rate limit and
+the per-channel in-flight slot permit. An owned input snapshot remains valid
+until the callback completes, even if capture advances. Camera/RTSP backend
+buffers may still add latency; this is not a guarantee of zero capture latency.
+
+For preloaded inputs (`"offline"`), detection results (including empty results)
+are cached by stored-frame index. Each successfully loaded frame is inferred
+at most once per run. Uncached frames use the latest available detections
+until their own result arrives. Live/non-preloaded inputs do not use this cache.
+The drawing toggle does not invalidate cached detections.
+
+Display updates use a separate frame counter, so cached playback keeps moving
+after inference stops. Console/HUD FPS counts **actual completed inferences**,
+not cache hits or displayed frames; it therefore decays toward zero after
+the cache warms up. Shutdown logs per-channel submitted/completed counts,
+cache hits, cached frames, and produced display frames. Failed channels submit
+zero requests in either mode.
+
+For continuous throughput measurements, explicitly opt into benchmark mode:
+
+```json
+"display_config": {
+    "capture_period": 30,
+    "display_fps": 30,
+    "inference_fps": 15,
+    "benchmark_mode": true
+}
+```
+
+For normal operation omit `benchmark_mode` or set it to `false`. Result caching
+changes the meaning of repeated-video demonstrations; benchmark mode preserves
+continuous inference but can significantly increase sustained NPU temperature.
+
+Policy tests can be run without a DEEPX device or SDK:
+
+```powershell
+cmake -S tests -B build_x64\policy_tests
+cmake --build build_x64\policy_tests --config Release
+ctest --test-dir build_x64\policy_tests -C Release --output-on-failure
+```
 
 Example (part of `video_sources`):
 

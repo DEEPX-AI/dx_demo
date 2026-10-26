@@ -77,6 +77,8 @@ public:
     bool _need_preproc = false;
     int _align_factor = 0;
     std::vector<uint8_t> _imgBuffer;
+    bool _inputAvailable = true;
+    int _inputFrame = -1;
 
     VideoStream(AppInputType srcType, std::string srcPath, int preLoadNum, dxdemo::common::Size npuSize, AppInputFormat npuColorFormat, dxdemo::common::Size dstSize, std::shared_ptr<dxrt::InferenceEngine> inferenceEngine, int cam_fps = 30, int cam_width = 1280, int cam_height = 720)
             : _srcType(srcType), _srcPath(srcPath), _preLoadNum(preLoadNum), _npuSize(npuSize), _npuColorFormat(npuColorFormat), _dstSize(dstSize), _inferenceEngine(inferenceEngine), _cam_fps(cam_fps), _cam_width(cam_width), _cam_height(cam_height)
@@ -267,6 +269,14 @@ public:
             break;
         }
 
+        if(_srcSize._width <= 0 || _srcSize._height <= 0)
+        {
+            std::cerr << "Error: invalid source dimensions for " << _srcPath
+                      << "; channel disabled." << std::endl;
+            _inputAvailable = false;
+            _srcSize = _npuSize;
+        }
+
     //Preprocess 
         _preprocRatio = std::min((float)_npuSize._width/_srcSize._width, (float)_npuSize._height/_srcSize._height);
         _resizeSize = dxdemo::common::Size((int)(_srcSize._width * _preprocRatio), (int)(_srcSize._height * _preprocRatio));
@@ -300,9 +310,26 @@ public:
     //PreloadNum
         if(_srcMode == PRELOAD) 
         {
-            for(int i = 0; i < _preLoadNum; i++)
+            int loaded = 0;
+            for(int i = 0; _inputAvailable && i < _preLoadNum; i++)
             {
-                Preprocess();
+                if(Preprocess())
+                    loaded++;
+            }
+            // Playback must wrap at the number of successfully decoded frames.
+            if(loaded != _preLoadNum)
+            {
+                std::cout << "Warning: " << _srcPath << " only produced " << loaded
+                           << "/" << _preLoadNum << " preload frames; clamping."
+                           << std::endl;
+                _preLoadNum = loaded;
+            }
+            if(_preLoadNum <= 0)
+            {
+                std::cerr << "Error: " << _srcPath
+                          << " produced no usable preload frames; channel disabled."
+                          << std::endl;
+                _inputAvailable = false;
             }
         }        
     };
@@ -458,6 +485,7 @@ public:
     
     void* GetInputStream(void)
     {
+        if(!_inputAvailable) return nullptr;
         cv::Mat img;
 
         if(_srcType == ISP)
@@ -501,7 +529,8 @@ public:
             }         
             else
             {
-                
+                _inputFrame = _preGetCnt;
+                _outGetCnt = _inputFrame;
                 if(_need_preproc)
                 {
                     data_pre_processing(_preImg[_preGetCnt].data, _imgBuffer.data());

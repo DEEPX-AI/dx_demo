@@ -3,6 +3,7 @@
 #include "profiler.h"
 #include <utils/common_util.hpp>
 #include <algorithm>
+#include <cstring>
 
 #ifdef __linux__
 #include <fcntl.h>
@@ -145,6 +146,12 @@ ObjectDetection::ObjectDetection(std::shared_ptr<dxrt::InferenceEngine> ie, std:
     
     _resultFrame = cv::Mat(_destHeight, _destWidth, CV_8UC3, cv::Scalar(0, 0, 0));
     _displayFrame = cv::Mat(_destHeight, _destWidth, CV_8UC3, cv::Scalar(0, 0, 0));
+    if(!_vStream._inputAvailable)
+    {
+        cv::putText(_resultFrame, "INPUT ERROR", cv::Point(8, 28),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 0, 255), 1);
+        _resultFrame.copyTo(_displayFrame);
+    }
     yolo = Yolo(yoloParam);
     if(!yolo.LayerReorder(_ie->GetOutputs()))
         return;
@@ -205,8 +212,10 @@ dxdemo::common::DetectObject ObjectDetection::GetScalingBBox(std::vector<Boundin
 }
 void ObjectDetection::threadFunc(int period)
 {
-    std::chrono::high_resolution_clock::time_point _cap_start, _proc_start;
+    std::chrono::high_resolution_clock::time_point _proc_start;
     cv::Mat member_temp;
+    auto nextCapture = std::chrono::steady_clock::now();
+    bool inputErrorReported = false;
     while(1)
     {        
         if(stop) break;
@@ -214,26 +223,54 @@ void ObjectDetection::threadFunc(int period)
         DXPROF_MARK(_channel, dxprof::ST_WORKER_LOOP);
         dxprof::Stopwatch _pfBusy;
         _proc_start = std::chrono::high_resolution_clock::now();
-        _cap_start = std::chrono::high_resolution_clock::now();
         void* input = nullptr;
         {
             DXPROF_SCOPE(_channel, dxprof::ST_GET_INPUT);
             input = _vStream.GetInputStream();
         }
+        if(!input)
         {
-            DXPROF_SCOPE(_channel, dxprof::ST_RUN_ASYNC);
-            std::ignore = _ie->RunAsync(input, (void*)this, (void*)outputMemory);
+            if(!inputErrorReported)
+                std::cerr << "Error: channel " << _channel
+                          << " capture failed; inference skipped until input recovers."
+                          << std::endl;
+            inputErrorReported = true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(period));
+            continue;
         }
+        inputErrorReported = false;
         std::vector<BoundingBox> bboxes;
         dxdemo::common::DetectObject bboxes_objects;
+        bool submit = false;
         {
             DXPROF_SCOPE(_channel, dxprof::ST_BBOX_SCALE);
             std::unique_lock<std::mutex> lk(_lock);
-            if(!_bboxes.empty() && _toggleDrawing)
+            const int frame = _vStream._inputFrame;
+            const auto cached = _frameDetections.find(frame);
+            const bool cacheHit = cached != _frameDetections.end();
+            const auto now = InferenceSchedule::Clock::now();
+            if(_schedule.CanSubmit(now, cacheHit))
             {
-                bboxes = std::vector<BoundingBox>(_bboxes);
+                // Capture may advance while the NPU is busy. Keep its input
+                // immutable until the completion callback has consumed it.
+                _pendingInput.resize(_ie->GetInputSize());
+                std::memcpy(_pendingInput.data(), input, _pendingInput.size());
+                _pendingFrame = frame;
+                _schedule.Submitted(now);
+                ++_submittedCount;
+                submit = true;
+            }
+            if(cacheHit) ++_cacheHits;
+            if(_toggleDrawing)
+            {
+                bboxes = cacheHit ? cached->second : _bboxes;
                 bboxes_objects = GetScalingBBox(bboxes);
             }
+        }
+        if(submit)
+        {
+            DXPROF_SCOPE(_channel, dxprof::ST_RUN_ASYNC);
+            std::ignore = _ie->RunAsync(_pendingInput.data(), (void*)this, (void*)outputMemory);
         }
         {
             DXPROF_SCOPE(_channel, dxprof::ST_GET_OUTPUT);
@@ -280,34 +317,11 @@ void ObjectDetection::threadFunc(int period)
             }
         }
 
-        
-        _inferenceTime = _ie->GetNpuInferenceTime();
-        _latencyTime = _ie->GetLatency();
-
-        // dxrt occasionally returns a bogus value (~1,249 s samples observed),
-        // which would poison the interval average and the running max. Route
-        // those to npu.anomaly instead of dropping them, so they stay visible.
-        const uint64_t kNpuTimeSaneUs = 1000000;   // 1 s; normal is ~10 ms
-        if(_inferenceTime < kNpuTimeSaneUs)
-            DXPROF_ADD(_channel, dxprof::ST_NPU_INFER, _inferenceTime);
-        else
-            DXPROF_ADD(_channel, dxprof::ST_NPU_ANOMALY, _inferenceTime);
-
-        if(_latencyTime < kNpuTimeSaneUs)
-            DXPROF_ADD(_channel, dxprof::ST_NPU_LATENCY, _latencyTime);
-        else
-            DXPROF_ADD(_channel, dxprof::ST_NPU_ANOMALY, _latencyTime);
-        
-        int64_t cap_us = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::high_resolution_clock::now() - _cap_start).count();
-        int64_t t = (period*1000 - cap_us)/1000;
-        if(t<0 || t>period) t = 0;
-        
-        if(_processed_count > 0)
         {
             dxprof::ScopedTimer _pfSwap(_channel, dxprof::ST_FRAME_SWAP);
             std::unique_lock<std::mutex> lk(_frameLock);
             cv::swap(member_temp, _resultFrame);
+            ++_frameCount;
             _pfSwap.Stop();   // keep pause waiting out of the statistics
             if(_isPause){
                 _cv.wait(lk, [this]{return !_isPause;});
@@ -320,13 +334,13 @@ void ObjectDetection::threadFunc(int period)
         // Requested vs actual sleep, which exposes the Windows 15.6 ms timer
         // tick making Sleep(1) take 15 ms or more.
         DXPROF_ADD(_channel, dxprof::ST_WORKER_BUSY, _pfBusy.ElapsedUs());
-        DXPROF_ADD(_channel, dxprof::ST_WORKER_SLEEP_REQ, (uint64_t)t * 1000);
+        nextCapture += std::chrono::milliseconds(period);
+        const auto now = std::chrono::steady_clock::now();
+        if(nextCapture < now) nextCapture = now;
+        DXPROF_ADD(_channel, dxprof::ST_WORKER_SLEEP_REQ,
+                   std::chrono::duration_cast<std::chrono::microseconds>(nextCapture - now).count());
         dxprof::Stopwatch _pfSleep;
-#ifdef __linux__
-        usleep(t*1000);
-#elif _WIN32
-        Sleep(t);
-#endif
+        std::this_thread::sleep_until(nextCapture);
         DXPROF_ADD(_channel, dxprof::ST_WORKER_SLEEP_ACT, _pfSleep.ElapsedUs());
     }
     std::cout << _channel << " ended." << std::endl;
@@ -344,10 +358,16 @@ void ObjectDetection::threadFillBlank(int period)
     }
     std::cout << _channel << " ended." << std::endl;
 }
-void ObjectDetection::Run(int period)
+void ObjectDetection::Run(int period, int inferenceFps, bool benchmark)
 {
+    _schedule.Configure(inferenceFps, benchmark);
     stop = false;
-    if(_videoSrc.first.empty())
+    std::cout << "[Inference] CH " << _channel << " mode="
+              << (benchmark ? "benchmark" : "cached")
+              << " max_fps=" << (benchmark ? 1000.0 / period : inferenceFps)
+              << " enabled=" << (!_videoSrc.first.empty() && _vStream._inputAvailable)
+              << std::endl;
+    if(_videoSrc.first.empty() || !_vStream._inputAvailable)
         _thread = std::thread(&ObjectDetection::threadFillBlank, this, period);
     else
         _thread = std::thread(&ObjectDetection::threadFunc, this, period);
@@ -355,7 +375,19 @@ void ObjectDetection::Run(int period)
 void ObjectDetection::Stop()
 {
     stop = true;
+    {
+        std::lock_guard<std::mutex> lk(_frameLock);
+        _isPause = false;
+        _cv.notify_all();
+    }
     _thread.join();
+    std::unique_lock<std::mutex> lk(_lock);
+    _inferenceCV.wait(lk, [this]{ return !_schedule.Pending(); });
+    std::cout << "[Inference] CH " << _channel << " submitted=" << _submittedCount
+              << " completed=" << _processed_count.load()
+              << " cache_hits=" << _cacheHits
+              << " cached_frames=" << _frameDetections.size()
+              << " produced_frames=" << _frameCount.load() << std::endl;
 }
 void ObjectDetection::Pause()
 {
@@ -407,6 +439,7 @@ std::string &ObjectDetection::Name()
 }
 void ObjectDetection::Toggle()
 {
+    std::lock_guard<std::mutex> lk(_lock);
     _toggleDrawing = !_toggleDrawing;
 }
 void ObjectDetection::PostProc(std::vector<std::shared_ptr<dxrt::Tensor>> &outputs)
@@ -420,9 +453,21 @@ void ObjectDetection::PostProc(std::vector<std::shared_ptr<dxrt::Tensor>> &outpu
         _pfWait.Stop();
         DXPROF_SCOPE(_channel, dxprof::ST_POSTPROC);
         _bboxes = yolo.PostProc(outputs);
+        if(_schedule.CacheEnabled() && _pendingFrame >= 0)
+            _frameDetections[_pendingFrame] = _bboxes;
+        _inferenceTime = _ie->GetNpuInferenceTime();
+        _latencyTime = _ie->GetLatency();
+        // Record NPU timings only for real completions, never for cache hits.
+        const uint64_t kNpuTimeSaneUs = 1000000;
+        DXPROF_ADD(_channel, _inferenceTime < kNpuTimeSaneUs
+                   ? dxprof::ST_NPU_INFER : dxprof::ST_NPU_ANOMALY, _inferenceTime);
+        DXPROF_ADD(_channel, _latencyTime < kNpuTimeSaneUs
+                   ? dxprof::ST_NPU_LATENCY : dxprof::ST_NPU_ANOMALY, _latencyTime);
+        _processed_count++;
+        _ret_processed_count++;
+        _schedule.Completed();
+        _inferenceCV.notify_all();
     }
-    _processed_count++;
-    _ret_processed_count++;
 }
 uint64_t ObjectDetection::GetPostProcessCount()
 {

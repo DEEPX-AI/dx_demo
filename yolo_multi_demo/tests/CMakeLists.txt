@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.14)
+project(yolo_multi_policy_tests LANGUAGES CXX)
+enable_testing()
+add_executable(inference_schedule_test inference_schedule_test.cpp)
+target_include_directories(inference_schedule_test PRIVATE ../include)
+target_compile_features(inference_schedule_test PRIVATE cxx_std_14)
+add_test(NAME inference_schedule COMMAND inference_schedule_test)

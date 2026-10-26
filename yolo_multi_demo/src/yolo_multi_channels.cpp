@@ -89,6 +89,8 @@ struct AppConfig
     float sidebar_font_scale; // 1.0 = default, <1.0 smaller, >1.0 larger
     float fps_value_font_scale; // 0.5 = default
     int display_fps; // max FPS for imshow rendering (0 = unlimited)
+    int inference_fps;
+    bool benchmark_mode;
     int console_fps_period_ms; // periodic FPS log to terminal (0 = disabled)
 
     // Stage profiler; see the "profile" block in the config json.
@@ -194,8 +196,9 @@ int ApplicationJsonParser(std::string configPath, AppConfig* dst)
                 dst->board_height = graphics_info_h;
             }
 #elif _WIN32
-            dst->board_width = GetSystemMetrics(SM_CXSCREEN);
-            dst->board_height = GetSystemMetrics(SM_CYSCREEN);
+            // Keep composition independent of monitor/window size.
+            dst->board_width = 1920;
+            dst->board_height = 1080;
 #endif
         }
         else
@@ -216,6 +219,7 @@ int ApplicationJsonParser(std::string configPath, AppConfig* dst)
         {
             dst->input_capture_period_ms = INPUT_CAPTURE_PERIOD_MS;
         }
+        DXRT_ASSERT(dst->input_capture_period_ms > 0, "ERR. capture_period must be positive");
 
         if(displayConfig.HasMember("show_fps"))
         {
@@ -286,6 +290,20 @@ int ApplicationJsonParser(std::string configPath, AppConfig* dst)
         dst->fps_value_font_scale = 0.5f;
 
         dst->display_fps = 30;
+        dst->inference_fps = 15;
+        dst->benchmark_mode = false;
+        if(displayConfig.HasMember("inference_fps"))
+        {
+            DXRT_ASSERT(displayConfig["inference_fps"].IsInt(), "ERR. inference_fps must be integer");
+            dst->inference_fps = displayConfig["inference_fps"].GetInt();
+        }
+        DXRT_ASSERT(dst->inference_fps > 0 && dst->inference_fps <= 1000,
+                    "ERR. inference_fps must be between 1 and 1000");
+        if(displayConfig.HasMember("benchmark_mode"))
+        {
+            DXRT_ASSERT(displayConfig["benchmark_mode"].IsBool(), "ERR. benchmark_mode must be boolean");
+            dst->benchmark_mode = displayConfig["benchmark_mode"].GetBool();
+        }
         if(displayConfig.HasMember("display_fps"))
         {
             DXRT_ASSERT(displayConfig["display_fps"].IsInt(), "ERR. display_fps must be integer");
@@ -1627,6 +1645,8 @@ DXRT_TRY_CATCH_BEGIN
                   << " (title " << TITLE_HEIGHT << ")\n"
                   << "capture_period_ms  : " << appConfig.input_capture_period_ms << "\n"
                   << "display_fps        : " << appConfig.display_fps << "\n"
+                  << "inference_fps      : " << appConfig.inference_fps << "\n"
+                  << "benchmark_mode     : " << appConfig.benchmark_mode << "\n"
                   << "num_devices        : " << appConfig.num_devices << "\n";
             extra << "preload_frames     : ";
             for(size_t i = 0; i < appConfig.pre_saved_frame_count.size(); i++)
@@ -1755,7 +1775,7 @@ DXRT_TRY_CATCH_BEGIN
 
     for(auto &app:apps)
     {
-        app->Run(appConfig.input_capture_period_ms);
+        app->Run(appConfig.input_capture_period_ms, appConfig.inference_fps, appConfig.benchmark_mode);
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     std::vector<cv::Rect> dstPoint = std::vector<cv::Rect>(apps.size(), cv::Rect(0, 0, 0, 0));
@@ -1805,7 +1825,7 @@ DXRT_TRY_CATCH_BEGIN
             DXPROF_SCOPE(0, dxprof::ST_COMPOSE);
             for(int i = 0; i < (int)apps.size(); i++)
             {
-                uint64_t cnt = apps[i]->GetPostProcessCount();
+                uint64_t cnt = apps[i]->GetFrameCount();
                 if(cnt != lastRenderCounts[i])
                 {
                     cv::Mat roi = outFrame(dstPoint[i]);

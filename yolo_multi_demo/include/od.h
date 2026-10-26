@@ -4,12 +4,14 @@
 #include <fstream>
 #include <string>
 #include <queue>
+#include <map>
 #include <vector>
 #include <unordered_map>
 #include <opencv2/opencv.hpp>
 #include <atomic>
 #include <thread>
 #include "yolo.h"
+#include "inference_schedule.h"
 #include <dxrt/dxrt_api.h>
 #include <common/objects.hpp>
 #include <utils/videostream.hpp>
@@ -24,7 +26,7 @@ public:
     ~ObjectDetection();
     void threadFunc(int period);
     void threadFillBlank(int period);
-    void Run(int period);
+    void Run(int period, int inferenceFps = 15, bool benchmark = false);
     void Stop();
     void Pause();
     void Play();
@@ -36,6 +38,7 @@ public:
     uint64_t GetLatencyTime();
     uint64_t GetProcessingTime();
     uint64_t GetPostProcessCount();
+    uint64_t GetFrameCount() const { return _frameCount.load(); }
     int Channel();
     std::string &Name();
     void Toggle();
@@ -56,6 +59,14 @@ private:
     uint64_t _processTime = 0;
     std::atomic<uint64_t> _processed_count{0};
     std::atomic<uint64_t> _ret_processed_count{0};
+    std::atomic<uint64_t> _frameCount{0};
+    InferenceSchedule _schedule;
+    std::condition_variable _inferenceCV;
+    std::vector<uint8_t> _pendingInput;
+    int _pendingFrame = -1;
+    std::map<int, std::vector<BoundingBox>> _frameDetections;
+    uint64_t _submittedCount = 0;
+    uint64_t _cacheHits = 0;
     int _srcWidth = 0;
     int _srcHeight = 0;
     int _width;
