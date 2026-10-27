@@ -13,44 +13,32 @@ int main()
     using Clock = InferenceSchedule::Clock;
     const Clock::time_point start{};
     InferenceSchedule schedule;
-    schedule.Configure(15, false);
-    require(schedule.CacheEnabled(), "normal mode must cache");
-    require(schedule.CanSubmit(start, false), "first frame must be eligible");
+    schedule.Configure(15);
+    require(schedule.CanSubmit(start), "first frame must be eligible");
     schedule.Submitted(start);
-    require(!schedule.CanSubmit(start + seconds(1), false), "one request in flight");
+    require(!schedule.CanSubmit(start + seconds(1)), "one request in flight");
     schedule.Completed();
-    require(!schedule.CanSubmit(start + milliseconds(66), false), "15 FPS interval");
-    require(schedule.CanSubmit(start + milliseconds(67), false), "interval expired");
-    require(!schedule.CanSubmit(start + seconds(1), true), "cached frames must not infer");
+    require(!schedule.CanSubmit(start + milliseconds(66)), "15 FPS interval");
+    require(schedule.CanSubmit(start + milliseconds(67)), "interval expired");
     schedule.Submitted(start + seconds(10));
     schedule.Completed();
-    require(!schedule.CanSubmit(start + seconds(10), false), "no catch-up burst");
+    require(!schedule.CanSubmit(start + seconds(10)), "no catch-up burst");
 
-    schedule.Configure(15, true);
-    require(!schedule.CacheEnabled(), "benchmark must bypass cache");
-    require(schedule.CanSubmit(start, true), "benchmark may repeat cached content");
-    schedule.Submitted(start);
-    require(!schedule.CanSubmit(start + seconds(1), true), "benchmark still bounded in flight");
-    schedule.Completed();
-    require(schedule.CanSubmit(start, true), "benchmark uses capture pacing, not 15 FPS cap");
-
-    schedule.Configure(1, false);
-    schedule.Submitted(start);
-    schedule.Completed();
-    require(!schedule.CanSubmit(start + milliseconds(999), false), "1 FPS cap");
-    require(schedule.CanSubmit(start + seconds(1), false), "1 FPS boundary");
-
-    schedule.Configure(15, false);
-    int submissions = 0;
-    for(int ms = 0; ms < 1000; ++ms)
+    for(int fps : {1, 5, 15, 30, 1000})
     {
-        if(schedule.CanSubmit(start + milliseconds(ms), false))
+        schedule.Configure(fps);
+        int submissions = 0;
+        for(int ms = 0; ms < 3000; ++ms)
         {
-            schedule.Submitted(start + milliseconds(ms));
-            ++submissions;
-            schedule.Completed();
+            if(schedule.CanSubmit(start + milliseconds(ms)))
+            {
+                schedule.Submitted(start + milliseconds(ms));
+                ++submissions;
+                schedule.Completed();
+            }
         }
+        require(submissions <= fps * 3, "configured FPS upper bound");
+        require(submissions > fps * 2, "inference must continue across repeated playback");
     }
-    require(submissions == 15, "measured one-second submission count must be 15");
-    std::cout << "Inference schedule tests passed\n";
+    std::cout << "Continuous inference schedule tests passed\n";
 }

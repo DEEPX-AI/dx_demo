@@ -78,7 +78,7 @@ When `video_sources` includes a camera input (one of `"camera"`, `"camera_image"
 | `sidebar_font_scale` | float | 1.0 | Sidebar font scale |
 | `fps_value_font_scale` | float | 0.5 | Top HUD FPS value font scale |
 | `inference_fps` | integer | 15 | Maximum submissions per second per channel (1-1000); actual rate is also limited by capture and NPU completion. |
-| `benchmark_mode` | boolean | false | Disable preload-result caching and the `inference_fps` cap; repeatedly infer at the `capture_period` cadence, still allowing only one in-flight request per channel. |
+| `benchmark_mode` | boolean | false | Legacy mode label only; actual inference is continuous in both modes and always obeys `inference_fps`. |
 | `capture_period` | integer | 33 | Positive capture/playback period in milliseconds, **not FPS**. Existing configs commonly use 30 ms. |
 | `display_fps` | integer | 30 | Main window refresh cap; independent of inference. Zero means unlimited. |
 
@@ -90,33 +90,44 @@ the per-channel in-flight slot permit. An owned input snapshot remains valid
 until the callback completes, even if capture advances. Camera/RTSP backend
 buffers may still add latency; this is not a guarantee of zero capture latency.
 
-For preloaded inputs (`"offline"`), detection results (including empty results)
-are cached by stored-frame index. Each successfully loaded frame is inferred
-at most once per run. Uncached frames use the latest available detections
-until their own result arrives. Live/non-preloaded inputs do not use this cache.
-The drawing toggle does not invalidate cached detections.
+Preloaded inputs (`"offline"`) repeat their stored video frames, but **do not
+cache inference results**. Every eligible submission performs actual NPU
+inference, including subsequent loops of the same video. Between completions,
+frames are drawn with the latest completed detections. Camera/RTSP and
+non-preloaded inputs follow the same inference-rate limit.
 
-Display updates use a separate frame counter, so cached playback keeps moving
-after inference stops. Console/HUD FPS counts **actual completed inferences**,
-not cache hits or displayed frames; it therefore decays toward zero after
-the cache warms up. Shutdown logs per-channel submitted/completed counts,
-cache hits, cached frames, and produced display frames. Failed channels submit
-zero requests in either mode.
+Display updates use a separate frame counter so playback is independent of
+inference frequency. Console/HUD FPS counts **actual completed inferences**,
+not displayed frames. Shutdown logs per-channel submitted/completed counts
+and produced display frames. Failed channels submit zero requests in either mode.
 
-For continuous throughput measurements, explicitly opt into benchmark mode:
+### CPU-side rendering
+
+Channel output buffers are reused across frames through the existing worker
+swap; resizing and drawing remain separate from stored preload images.
+The renderer copies each updated channel directly into its board ROI under
+the channel frame lock, avoiding an intermediate full-frame copy and buffer.
+Channel badge layout is computed once per worker, since its output dimensions
+are fixed, and bounding-box scaling reads detections without first copying them.
+These changes do not add another per-preload-frame image cache or change
+inference rate limits. Performance and temperature gains require runtime
+measurement on the target device.
+
+Set the per-channel inference upper bound in the JSON `display_config`:
 
 ```json
 "display_config": {
     "capture_period": 30,
     "display_fps": 30,
-    "inference_fps": 15,
-    "benchmark_mode": true
+    "inference_fps": 15
 }
 ```
 
-For normal operation omit `benchmark_mode` or set it to `false`. Result caching
-changes the meaning of repeated-video demonstrations; benchmark mode preserves
-continuous inference but can significantly increase sustained NPU temperature.
+For example, 8 channels at 15 FPS permit at most approximately 120 submissions
+per second in total. The actual rate can be lower due to capture cadence,
+inference latency and scheduling. Increase `inference_fps` for throughput
+measurements; `benchmark_mode` no longer bypasses it. Continuous inference can
+increase sustained NPU temperature compared with the former result-cache mode.
 
 Policy tests can be run without a DEEPX device or SDK:
 

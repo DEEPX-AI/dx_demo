@@ -47,6 +47,7 @@
     "display_config": {
         "display_label": "output",
         "capture_period": 30,
+        "inference_fps": 15,
         "show_fps": true,
         "fps_value_font_scale": 0.5,
         "grid_cols": 3,

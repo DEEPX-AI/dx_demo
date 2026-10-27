@@ -145,12 +145,10 @@ ObjectDetection::ObjectDetection(std::shared_ptr<dxrt::InferenceEngine> ie, std:
     _postprocScaleRatio = dxdemo::common::Size_f(_postprocRatio._width/_preprocRatio, _postprocRatio._height/_preprocRatio);
     
     _resultFrame = cv::Mat(_destHeight, _destWidth, CV_8UC3, cv::Scalar(0, 0, 0));
-    _displayFrame = cv::Mat(_destHeight, _destWidth, CV_8UC3, cv::Scalar(0, 0, 0));
     if(!_vStream._inputAvailable)
     {
         cv::putText(_resultFrame, "INPUT ERROR", cv::Point(8, 28),
                     cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 0, 255), 1);
-        _resultFrame.copyTo(_displayFrame);
     }
     yolo = Yolo(yoloParam);
     if(!yolo.LayerReorder(_ie->GetOutputs()))
@@ -173,12 +171,10 @@ ObjectDetection::ObjectDetection(std::shared_ptr<dxrt::InferenceEngine> ie, int 
     {
         _logo = cv::imread("./sample/dx_colored_logo.png", cv::IMREAD_COLOR);
         cv::resize(_logo, _resultFrame, cv::Size(_destWidth, _destHeight), 0, 0, cv::INTER_LINEAR);
-        _displayFrame = _resultFrame.clone();
     }
     else
     {
         _resultFrame = cv::Mat(_destHeight, _destWidth, CV_8UC3, cv::Scalar(0, 0, 0));
-        _displayFrame = cv::Mat(_destHeight, _destWidth, CV_8UC3, cv::Scalar(0, 0, 0));
     }
     outputMemory = nullptr;
 }
@@ -186,11 +182,12 @@ ObjectDetection::~ObjectDetection() {
     if(outputMemory)
         operator delete(outputMemory);
 }
-dxdemo::common::DetectObject ObjectDetection::GetScalingBBox(std::vector<BoundingBox>& bboxes)
+dxdemo::common::DetectObject ObjectDetection::GetScalingBBox(const std::vector<BoundingBox>& bboxes)
 {
     dxdemo::common::DetectObject result;
     result._num_of_detections = bboxes.size();
-    for (auto& b : bboxes)
+    result._detections.reserve(bboxes.size());
+    for (const auto& b : bboxes)
     {
         dxdemo::common::BBox box;
         box._xmin = (b.box[0] - _postprocPaddedSize._width) * _postprocScaleRatio._width;
@@ -214,6 +211,22 @@ void ObjectDetection::threadFunc(int period)
 {
     std::chrono::high_resolution_clock::time_point _proc_start;
     cv::Mat member_temp;
+    const std::string chLabel = "CH " + std::to_string(_channel);
+    int badgeH = std::max(22, (int)(_destHeight * 0.055));
+    const double fontScale = badgeH * 0.028;
+    const int textThick = std::max(1, badgeH / 14);
+    int baseLine = 0;
+    const cv::Size textSize = cv::getTextSize(chLabel, cv::FONT_HERSHEY_DUPLEX,
+                                             fontScale, textThick, &baseLine);
+    const int padX = std::max(8, badgeH / 2);
+    const int accentW = std::max(3, badgeH / 8);
+    const int margin = std::max(6, (int)(_destHeight * 0.012));
+    const int badgeW = std::min(accentW + padX + textSize.width + padX,
+                                std::max(0, _destWidth - margin * 2));
+    badgeH = std::min(badgeH, std::max(0, _destHeight - margin * 2));
+    const cv::Rect badgeRect(margin, margin, badgeW, badgeH);
+    const cv::Point textOrg(badgeRect.x + accentW + padX,
+                            badgeRect.y + (badgeRect.height + textSize.height) / 2 - 1);
     auto nextCapture = std::chrono::steady_clock::now();
     bool inputErrorReported = false;
     while(1)
@@ -239,32 +252,25 @@ void ObjectDetection::threadFunc(int period)
             continue;
         }
         inputErrorReported = false;
-        std::vector<BoundingBox> bboxes;
         dxdemo::common::DetectObject bboxes_objects;
         bool submit = false;
         {
             DXPROF_SCOPE(_channel, dxprof::ST_BBOX_SCALE);
             std::unique_lock<std::mutex> lk(_lock);
-            const int frame = _vStream._inputFrame;
-            const auto cached = _frameDetections.find(frame);
-            const bool cacheHit = cached != _frameDetections.end();
             const auto now = InferenceSchedule::Clock::now();
-            if(_schedule.CanSubmit(now, cacheHit))
+            if(_schedule.CanSubmit(now))
             {
                 // Capture may advance while the NPU is busy. Keep its input
                 // immutable until the completion callback has consumed it.
                 _pendingInput.resize(_ie->GetInputSize());
                 std::memcpy(_pendingInput.data(), input, _pendingInput.size());
-                _pendingFrame = frame;
                 _schedule.Submitted(now);
                 ++_submittedCount;
                 submit = true;
             }
-            if(cacheHit) ++_cacheHits;
             if(_toggleDrawing)
             {
-                bboxes = cacheHit ? cached->second : _bboxes;
-                bboxes_objects = GetScalingBBox(bboxes);
+                bboxes_objects = GetScalingBBox(_bboxes);
             }
         }
         if(submit)
@@ -274,42 +280,19 @@ void ObjectDetection::threadFunc(int period)
         }
         {
             DXPROF_SCOPE(_channel, dxprof::ST_GET_OUTPUT);
-            member_temp = _vStream.GetOutputStream(bboxes_objects);
+            _vStream.GetOutputStream(bboxes_objects, member_temp);
         }
             
         {
             DXPROF_SCOPE(_channel, dxprof::ST_BADGE);
-            const int frameW = member_temp.cols;
-            const int frameH = member_temp.rows;
-
-            std::string chLabel = "CH " + std::to_string(_channel);
-
-            int badgeH = std::max(22, (int)(frameH * 0.055));
-            double fontScale = badgeH * 0.028;
-            int textThick = std::max(1, (int)(badgeH / 14));
-            int baseLine = 0;
-            cv::Size textSize = cv::getTextSize(chLabel, cv::FONT_HERSHEY_DUPLEX,
-                                                fontScale, textThick, &baseLine);
-
-            int padX = std::max(8, badgeH / 2);
-            int accentW = std::max(3, badgeH / 8);
-            int badgeW = accentW + padX + textSize.width + padX;
-            int margin = std::max(6, (int)(frameH * 0.012));
-
-            badgeW = std::min(badgeW, std::max(0, frameW - margin * 2));
-            badgeH = std::min(badgeH, std::max(0, frameH - margin * 2));
-            if(badgeW > 0 && badgeH > 0)
+            if(!member_temp.empty() && badgeW > 0 && badgeH > 0)
             {
-                cv::Rect badgeRect(margin, margin, badgeW, badgeH);
-
                 cv::rectangle(member_temp, badgeRect, cv::Scalar(0, 0, 0), cv::FILLED);
 
                 cv::rectangle(member_temp,
                               cv::Rect(badgeRect.x, badgeRect.y, accentW, badgeRect.height),
                               cv::Scalar(0, 0, 255), cv::FILLED);
 
-                cv::Point textOrg(badgeRect.x + accentW + padX,
-                                  badgeRect.y + (badgeRect.height + textSize.height) / 2 - 1);
                 cv::putText(member_temp, chLabel, textOrg,
                             cv::FONT_HERSHEY_DUPLEX, fontScale,
                             cv::Scalar(255, 255, 255), textThick, cv::LINE_AA);
@@ -360,11 +343,11 @@ void ObjectDetection::threadFillBlank(int period)
 }
 void ObjectDetection::Run(int period, int inferenceFps, bool benchmark)
 {
-    _schedule.Configure(inferenceFps, benchmark);
+    _schedule.Configure(inferenceFps);
     stop = false;
     std::cout << "[Inference] CH " << _channel << " mode="
-              << (benchmark ? "benchmark" : "cached")
-              << " max_fps=" << (benchmark ? 1000.0 / period : inferenceFps)
+              << (benchmark ? "benchmark" : "continuous")
+              << " max_fps=" << inferenceFps
               << " enabled=" << (!_videoSrc.first.empty() && _vStream._inputAvailable)
               << std::endl;
     if(_videoSrc.first.empty() || !_vStream._inputAvailable)
@@ -385,8 +368,6 @@ void ObjectDetection::Stop()
     _inferenceCV.wait(lk, [this]{ return !_schedule.Pending(); });
     std::cout << "[Inference] CH " << _channel << " submitted=" << _submittedCount
               << " completed=" << _processed_count.load()
-              << " cache_hits=" << _cacheHits
-              << " cached_frames=" << _frameDetections.size()
               << " produced_frames=" << _frameCount.load() << std::endl;
 }
 void ObjectDetection::Pause()
@@ -403,11 +384,10 @@ void ObjectDetection::Play()
         _cv.notify_all();
     }
 }
-cv::Mat ObjectDetection::ResultFrame()
+void ObjectDetection::CopyResultFrameTo(cv::Mat& destination)
 {
     std::unique_lock<std::mutex> lk(_frameLock);
-    _resultFrame.copyTo(_displayFrame);
-    return _displayFrame;
+    _resultFrame.copyTo(destination);
 }
 std::pair<int, int> ObjectDetection::Position()
 {
@@ -453,11 +433,9 @@ void ObjectDetection::PostProc(std::vector<std::shared_ptr<dxrt::Tensor>> &outpu
         _pfWait.Stop();
         DXPROF_SCOPE(_channel, dxprof::ST_POSTPROC);
         _bboxes = yolo.PostProc(outputs);
-        if(_schedule.CacheEnabled() && _pendingFrame >= 0)
-            _frameDetections[_pendingFrame] = _bboxes;
         _inferenceTime = _ie->GetNpuInferenceTime();
         _latencyTime = _ie->GetLatency();
-        // Record NPU timings only for real completions, never for cache hits.
+        // Record NPU timings only for real completions.
         const uint64_t kNpuTimeSaneUs = 1000000;
         DXPROF_ADD(_channel, _inferenceTime < kNpuTimeSaneUs
                    ? dxprof::ST_NPU_INFER : dxprof::ST_NPU_ANOMALY, _inferenceTime);

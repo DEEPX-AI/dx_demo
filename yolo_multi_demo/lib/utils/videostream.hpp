@@ -553,15 +553,12 @@ public:
     {
         if(_srcSize == _dstSize)
         {
-            // clone() is required. cv::Mat assignment shares the data buffer,
-            // so dst = src would let the caller's DrawBox/DrawCaption paint
-            // straight onto the stored frame; PRELOAD reuses _srcImg[], so
-            // boxes would accumulate on it permanently.
-            dst = src.clone();
+            // Keep drawing separate from the stored frame, reusing dst storage.
+            src.copyTo(dst);
         }
         else
         {
-            // cv::resize allocates dst, so it shares no buffer with src.
+            // Reuse the output allocation without modifying the stored source.
             cv::resize(src, dst, cv::Size(_dstSize._width, _dstSize._height), 0, 0, cv::INTER_LINEAR);
         }
     };
@@ -613,11 +610,11 @@ public:
         }
     };
 
-    cv::Mat GetOutputStream(dxdemo::common::DetectObject& obj)
+    void GetOutputStream(dxdemo::common::DetectObject& obj, cv::Mat& dstImg)
     {
-        cv::Mat dstImg;
         if(_srcType == ISP)
         {
+            dstImg.release();
 #if __riscv                   
             ClearFontBuf();
             ClearBoxBuf();
@@ -655,8 +652,6 @@ public:
                     DrawFaceKpt(dstImg, obj._detections[i]);
             }
         }
-
-        return dstImg;
     };
 
 #if __riscv        

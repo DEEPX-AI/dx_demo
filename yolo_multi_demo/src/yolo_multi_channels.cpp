@@ -1829,7 +1829,7 @@ DXRT_TRY_CATCH_BEGIN
                 if(cnt != lastRenderCounts[i])
                 {
                     cv::Mat roi = outFrame(dstPoint[i]);
-                    apps[i]->ResultFrame().copyTo(roi);
+                    apps[i]->CopyResultFrameTo(roi);
                     lastRenderCounts[i] = cnt;
                 }
             }

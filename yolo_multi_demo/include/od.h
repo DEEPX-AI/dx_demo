@@ -4,7 +4,6 @@
 #include <fstream>
 #include <string>
 #include <queue>
-#include <map>
 #include <vector>
 #include <unordered_map>
 #include <opencv2/opencv.hpp>
@@ -30,7 +29,7 @@ public:
     void Stop();
     void Pause();
     void Play();
-    cv::Mat ResultFrame();
+    void CopyResultFrameTo(cv::Mat& destination);
     std::pair<int, int> Position();
     std::pair<int, int> Resolution();
     std::pair<int, int> SourceResolution() const { return std::make_pair(_srcWidth, _srcHeight); }
@@ -45,7 +44,7 @@ public:
     void SetLive(bool v) { _isLive = v; }
     bool IsLive() const { return _isLive; }
     void PostProc(std::vector<std::shared_ptr<dxrt::Tensor>>&);
-    dxdemo::common::DetectObject GetScalingBBox(std::vector<BoundingBox>& bboxes);
+    dxdemo::common::DetectObject GetScalingBBox(const std::vector<BoundingBox>& bboxes);
     friend std::ostream& operator<<(std::ostream&, const ObjectDetection&);
 private:
     std::shared_ptr<dxrt::InferenceEngine> _ie;
@@ -63,10 +62,7 @@ private:
     InferenceSchedule _schedule;
     std::condition_variable _inferenceCV;
     std::vector<uint8_t> _pendingInput;
-    int _pendingFrame = -1;
-    std::map<int, std::vector<BoundingBox>> _frameDetections;
     uint64_t _submittedCount = 0;
-    uint64_t _cacheHits = 0;
     int _srcWidth = 0;
     int _srcHeight = 0;
     int _width;
@@ -80,7 +76,6 @@ private:
     bool _isLive = false;
     std::pair<std::string, std::string> _videoSrc;
     cv::Mat _resultFrame;
-    cv::Mat _displayFrame;
 
     cv::Mat _logo;
     std::thread _thread;
